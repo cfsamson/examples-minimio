@@ -8,7 +8,17 @@ Regarding error handling, I will do the basics of error handling but will not co
 
 ## Usage
 
-Coming soon
+```rust
+let mut event_loop = EventLoop::new();
+
+let id = event_loop.register_event(Event::new_get("www.google.com"));
+
+while let Ok(event_id, data) = event_loop.wait() {
+    if let id == event_id {
+        println!("got a response: ", data);
+    }
+}
+```
 
 ## Licence
 This library is MIT licensed.
