@@ -89,6 +89,8 @@ mod windows {
         }
 
         pub fn poll<T>(&mut self) -> Option<Vec<Event<T>>> {
+            // calling GetQueueCompletionStatus wil either return a handle to a "port" ready to read or 
+            // block if the queue is empty.
             None
         }
 
