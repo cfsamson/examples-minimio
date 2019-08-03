@@ -65,7 +65,8 @@ mod windows {
             thread::spawn(move || {
                 let events = vec![ffi::IOCPevent::default(); MAXEVENTS];
                 loop {
-                    //wait for events
+                    // TODO: wait for events
+                    
                     // handle recieved events
                     let n = 0;
                     let iocp_event = events[n].clone();
@@ -84,7 +85,7 @@ mod windows {
         }
 
         pub fn register_event<T>(&mut self, event: Event<T>) {
-
+            
         }
 
         pub fn poll<T>(&mut self) -> Option<Vec<Event<T>>> {
@@ -100,8 +101,6 @@ mod windows {
 
             None
         }
-
-
     }
 
     pub enum EventResult {
@@ -109,6 +108,9 @@ mod windows {
     }
 
     mod ffi {
+        use std::ptr;
+        use std::os::raw::{c_void, c_int};
+        use std::os::windows::io::{AsRawSocket, RawSocket};
         #[derive(Debug, Clone)]
         pub struct IOCPevent {
 
@@ -120,6 +122,61 @@ mod windows {
 
                 }
             }
+        }
+
+        const INVALID_HANDLE_VALUE: i32 = -1;
+
+        // Reference: https://docs.microsoft.com/en-us/windows/win32/api/winsock2/ns-winsock2-wsaoverlapped
+        #[repr(C)]
+        struct WSAOVERLAPPED {
+            /// Reserved for internal use
+            internal: ULONG_PTR,
+            /// Reserved
+            internal_high: ULONG_PTR,
+            /// Reserved for service providers
+            offset: DWORD,
+            /// Reserved for service providers
+            offset_high: DWORD,
+            /// If an overlapped I/O operation is issued without an I/O completion routine 
+            /// (the operation's lpCompletionRoutine parameter is set to null), then this parameter 
+            /// should either contain a valid handle to a WSAEVENT object or be null. If the 
+            /// lpCompletionRoutine parameter of the call is non-null then applications are free 
+            /// to use this parameter as necessary.
+            h_event: HANDLE,
+        }
+
+        https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
+        struct OVERLAPPED {
+            internal: ULONG_PTR,
+            internal_high: ULONG_PTR,
+            dummy: [DWORD; 2],
+            h_event: HANDLE,
+        }
+
+        // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
+        type HANDLE = *mut c_void;
+        type DWORD = u32;
+        type ULONG_PTR = usize;
+        type PULONG_PTR = *mut ULONG_PTR;
+        type LPDWORD = *mut DWORD;
+        type LPWSABUF = *mut u8;
+        type LPWSAOVERLAPPED  = *mut WSAOVERLAPPED;
+        type LPOVERLAPPED = *mut OVERLAPPED;
+
+        #[link(name = "win32")]
+        extern "stdcall" {
+            // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
+            //static INVALID_HANDLE_VALUE: c_int;
+            // https://docs.microsoft.com/en-us/windows/win32/fileio/createiocompletionport
+            fn CreateIoCompletionPort(filehandle: HANDLE, existing_completionport: HANDLE, completion_key: ULONG_PTR, number_of_concurrent_threads: DWORD) -> HANDLE;
+            // https://docs.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsarecv
+            fn WSARecv(s: RawSocket, lpBuffers: LPWSABUF, dwBufferCount: DWORD, lpNumberOfBytesRecvd: LPDWORD, lpFlags: DWORD, lpOverlapped: LPWSAOVERLAPPED) -> i32;
+            // https://docs.microsoft.com/en-us/windows/win32/fileio/postqueuedcompletionstatus
+            fn PostQueuedCompletionStatus(CompletionPort: HANDLE, dwNumberOfBytesTransferred: DWORD, dwCompletionKey: ULONG_PTR, lpOverlapped: LPWSAOVERLAPPED) -> i32;
+            // https://docs.microsoft.com/nb-no/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatus
+            fn GetQueuedCompletionStatus(CompletionPort: HANDLE, lpNumberOfBytesTransferred: LPDWORD, lpCompletionKey: PULONG_PTR, lpOverlapped: OVERLAPPED, dwMilliseconds: DWORD) -> i32;
+            // https://docs.microsoft.com/nb-no/windows/win32/api/handleapi/nf-handleapi-closehandle
+            fn CloseHandle(hObject: HANDLE) -> i32;
         }
     }
 }
