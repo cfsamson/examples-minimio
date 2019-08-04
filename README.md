@@ -1,6 +1,6 @@
 # An example implementation of an IO event loop
 
-Initially I intended to include this in my book on async code, but the topic of creating a cross platform implementation of an event queue based on OS specific primitives ended up beeing a bigger undertaking than what I thought.
+Initially I intended to include this in my book on async code, but the topic of creating a cross platform implementation of an event queue based on OS specific primitives ended up being a bigger undertaking than what I thought.
 
 This library aims to simple and focus on explaining the concepts to understand how epoll, kqueue and iocp works, and will for now only support one simple use case, but it's relatively easy to extend once the infrastructure is set up.
 

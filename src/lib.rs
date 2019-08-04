@@ -84,7 +84,7 @@ mod windows {
             }
         }
 
-        pub fn register_event<T>(&mut self, event: Event<T>) {
+        pub fn register_soc_read_event<T>(&mut self, soc: RawSocket) {
             
         }
 
