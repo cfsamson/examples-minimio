@@ -1,5 +1,6 @@
 use std::error;
 use std::fmt;
+use std::io::Read;
 
 #[cfg(target_os = "windows")]
 pub use windows::{Event, EventLoop, EventResult};
@@ -7,6 +8,12 @@ pub use windows::{Event, EventLoop, EventResult};
 //pub use linux::{Event, EventLoop, EventResult};
 
 const MAXEVENTS: usize = 1000;
+
+pub enum PollStatus<T: Read> {
+    WouldBlock,
+    Ready(Read),
+    Finished,
+}
 
 #[derive(Debug)]
 pub enum ElErr {
@@ -128,7 +135,7 @@ mod windows {
         pub fn register_soc_read_event<T>(&mut self, soc: RawSocket) {}
 
         pub fn poll<T>(&mut self) -> Option<Vec<Event<T>>> {
-            // calling GetQueueCompletionStatus wil either return a handle to a "port" ready to read or
+            // calling GetQueueCompletionStatus will either return a handle to a "port" ready to read or
             // block if the queue is empty.
             None
         }
@@ -209,17 +216,24 @@ mod windows {
         /// this as an isize instead;
         type HANDLE = isize;
         type DWORD = u32;
-        type ULONG_PTR = usize;
+        type ULONG_PTR = *mut usize;
         type PULONG_PTR = *mut ULONG_PTR;
         type LPDWORD = *mut DWORD;
-        type LPWSABUF = *mut u8;
+        type LPWSABUF = *mut WSABUF;
         type LPWSAOVERLAPPED = *mut WSAOVERLAPPED;
         type LPOVERLAPPED = *mut OVERLAPPED;
 
-            // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
-            // read this! https://devblogs.microsoft.com/oldnewthing/20040302-00/?p=40443
-            /// Defined in `win32.h` which you can find on your windows system
-            static INVALID_HANDLE_VALUE: HANDLE = -1;
+        // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
+        // read this! https://devblogs.microsoft.com/oldnewthing/20040302-00/?p=40443
+        /// Defined in `win32.h` which you can find on your windows system
+        static INVALID_HANDLE_VALUE: HANDLE = -1;
+
+        // https://docs.microsoft.com/en-us/windows/win32/winsock/windows-sockets-error-codes-2
+        static WSA_IO_PENDING: i32 = 997;
+
+        // Funnily enough this is the same as -1 when interpreted as an i32
+        // see for yourself: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=cdb33e88acd34ef46bc052d427854210
+        static INFINITE: u32 = 4294967295;
 
         #[link(name = "Kernel32")]
         extern "stdcall" {
@@ -252,11 +266,14 @@ mod windows {
                 CompletionPort: HANDLE,
                 lpNumberOfBytesTransferred: LPDWORD,
                 lpCompletionKey: PULONG_PTR,
-                lpOverlapped: OVERLAPPED,
+                lpOverlapped: LPOVERLAPPED,
                 dwMilliseconds: DWORD,
             ) -> i32;
             // https://docs.microsoft.com/nb-no/windows/win32/api/handleapi/nf-handleapi-closehandle
             fn CloseHandle(hObject: HANDLE) -> i32;
+
+            // https://docs.microsoft.com/nb-no/windows/win32/api/winsock/nf-winsock-wsagetlasterror
+            fn WSAGetLastError() -> i32;
         }
 
         // ===== SAFE WRAPPERS =====
@@ -273,20 +290,55 @@ mod windows {
             }
         }
 
-        pub fn create_soc_read_event(s: RawSocket, wsabuffers: &mut [WSABUF], bytes_recieved: &mut u32) -> Result<(), ElErr> {
-            let buf: *mut u8 = buffer.as_mut_ptr();
+        pub fn create_soc_read_event(s: RawSocket, wsabuffers: &mut [WSABUF], bytes_recieved: &mut u32, ol: &mut WSAOVERLAPPED) -> Result<(), ElErr> {
             // This actually takes an array of buffers but we will only need one so we can just box it
             // and point to it (there is no difference in memory between a `vec![T; 1]` and a `Box::new(T)`)
             let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
-            let num_bytes_recived_ptr: *mut u32 = bytes_recieved;
-            let lp_flags = 
+            //let num_bytes_recived_ptr: *mut u32 = bytes_recieved;
 
-            unsafe {
-                let res = WSARecv(s, )
+       
+                let res = unsafe { WSARecv(s, buff_ptr, 1, bytes_recieved, 0, ol) };
+
+                    if res != 0 {
+                    let err = unsafe { WSAGetLastError() };
+
+                    if err == WSA_IO_PENDING {
+                        // Everything is OK, and we can wait this with GetQueuedCompletionStatus
+                        Ok(())
+                    } else {
+                        return Err(std::io::Error::last_os_error().into());
+                    }
+
+                } else {
+                    // The socket is already ready so we don't need to queue it
+                    // TODO: Avoid queueing this
+                    Ok(())
+                }
+            }
+
+        pub fn register_event(completion_port: isize, bytes_to_transfer: u32, completion_key: &mut usize, overlapped_ptr: &mut WSAOVERLAPPED) -> Result<(), ElErr> {
+            let res = unsafe { PostQueuedCompletionStatus(completion_port, bytes_to_transfer, completion_key, overlapped_ptr)};
+            if res != 0 {
+                Err(std::io::Error::last_os_error().into())
+            } else {
+                Ok(())
             }
         }
 
-        pub fn register_event(completion_port: )
+
+        pub fn get_queued_completion_status(completion_port: isize, bytes_transferred_ptr: &mut u32, completion_key_ptr: &mut &mut usize, overlapped_ptr: *mut OVERLAPPED) -> Result<(), ElErr> {
+            // can't coerce directly to *mut *mut usize and cant cast `&mut` as `*mut`
+            let completion_key_ptr: *mut &mut usize = completion_key_ptr;
+            // but we can cast a `*mut ...`
+            let completion_key_ptr: *mut *mut usize = completion_key_ptr as *mut *mut usize;
+            let res = unsafe { GetQueuedCompletionStatus(completion_port, bytes_transferred_ptr, completion_key_ptr, overlapped_ptr, INFINITE)};
+
+            if res != 0 {
+                Err(std::io::Error::last_os_error().into())
+            } else {
+                Ok(())
+            }
+        }
 
         #[cfg(test)]
         mod tests {
