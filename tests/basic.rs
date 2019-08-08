@@ -1,4 +1,4 @@
-use minimio::{EventLoop, Event, PollStatus};
+use minimio::{Poll, Events, TcpStream, Interests};
 
 // #[test]
 fn main() {
@@ -15,22 +15,25 @@ fn main() {
 }
 
 fn alt2() {
-    let mut evtl = EventLoop::new();
+    let mut poll = Poll::new().unwrap();
+    let registry = poll.registry(); //this is different form mio
+    let mut events = Events::with_capacity(1024);
 
-    let mut stream = minimio::TcpStream::new("www.google.com");
+    let mut stream = TcpStream::new("www.google.com");
 
-    let future_stream = evtl.register(stream);
+    // 0 is the ID
+    let future_stream = registry.register(&stream, 0, Interests::Readable).unwrap();
 
     loop {
-        match future_stream.poll() {
-            PollStatus::WouldBlock => (),
-            PollStatus::Ready(reader) => {
-                let mut buff = String::new();
-                reader.read_to_string(&mut buff);
-                println!("{}", buff);
-            }, 
-            PollStatus::Finished => break,
-        }
+       poll.poll(&mut events, None).unwrap();
+       for event in events {
+           if event.id() == 0 {
+               // Socket connected (could be a spurious wakeup)
+               let mut buffer = String::new();
+               stream.read_to_string(&mut buffer).unwrap();
+               println!(buffer);
+           }
+       }
     }
 
 }
