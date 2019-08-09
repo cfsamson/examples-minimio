@@ -5,7 +5,7 @@ use std::io::Read;
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{Poll, Event, TcpStream};
+pub use windows::{Selector, Event, TcpStream};
 
 #[cfg(target_os = "macos")]
 mod macos;

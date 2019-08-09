@@ -1,40 +1,15 @@
 use crate::ElErr;
-    use std::os::windows::io::{AsRawSocket, RawSocket};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::mpsc::{channel, Receiver, Sender};
-    use std::sync::{Arc, Mutex};
-    use std::thread;
+use std::os::windows::io::{AsRawSocket, RawSocket};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use super::MAXEVENTS;
 
-    use super::MAXEVENTS;
+    pub type Event = ffi::WSABUF;
 
-    pub struct Event<T> {
-        /// Must not be moved, Windows holds raw pointers to this data
-        data: T,
-        id: usize,
-        handle: Option<isize>,
-        /// Must not be moved, Windows holds raw pointers to this data
-        wsa_buffers: Vec<ffi::WSABUF>,
-
-        /// Must not be moved, Windows holds raw pointers to this data
-        bytes_recived: u32,
-
-    }
-
-    impl Event<String> {
-        pub fn new_get(url: &str) -> Self {
-            Event {
-                data: String::new(),
-                // TODO: Set
-                id: 0,
-                handle: None,
-                wsa_buffers: vec![],
-                bytes_recived: 0,
-            }
-        }
-
-        pub fn data(self) -> String {
-            self.data
-        }
+    pub struct TcpStream {
+        inner: net
     }
 
     enum ErrorTypes {
@@ -53,13 +28,13 @@ use crate::ElErr;
         }
     }
 
-    pub struct EventLoop {
+    pub struct Selector {
         has_error: Arc<AtomicUsize>,
         errors: Arc<Mutex<Vec<String>>>,
         queue_handle: i32,
     }
 
-    impl EventLoop {
+    impl Selector {
         pub fn new() -> Result<Self, ElErr> {
             // set up the queue
             let queue_handle = ffi::create_queue()?;
@@ -87,7 +62,7 @@ use crate::ElErr;
                 }
             });
 
-            Ok(EventLoop {
+            Ok(Selector {
                 has_error,
                 errors,
                 queue_handle,
