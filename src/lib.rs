@@ -1,6 +1,7 @@
 use std::error;
 use std::fmt;
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -15,9 +16,16 @@ pub use macos::{Selector, Event, TcpStream};
 //pub use linux::{Event, EventLoop, EventResult};
 
 const MAXEVENTS: usize = 1000;
+static ID: Id = Id(AtomicUsize::new(0));
+
+struct Id(AtomicUsize);
+impl Id {
+    fn next(&self) -> usize {
+        self.0.fetch_add(1, Ordering::Relaxed)
+    }
+}
 
 pub type Events = Vec<Event>;
-
 
 pub mod Interests {
     pub const WRITABLE: u8 = 0b0000_0001;

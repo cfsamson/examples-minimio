@@ -1,6 +1,7 @@
 use std::net;
 use std::io::{self, Read, IoSliceMut};
 use std::os::unix::io::{AsRawFd, RawFd};
+use crate::ID;
 
 pub struct Selector {
     id: usize,
@@ -8,7 +9,22 @@ pub struct Selector {
 }
 
 impl Selector {
-    
+    fn new_with_id(id: usize) -> io::Result<Self> {
+        Ok(Selector {
+            id,
+            kq: ffi::queue()?,
+        })
+    }
+
+    fn new() -> io::Result<Self> {
+        Selector::new_with_id(ID.next())
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
+    pub fn select()
 }
 
 pub type Event = ffi::Kevent;
