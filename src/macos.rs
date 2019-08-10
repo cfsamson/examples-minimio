@@ -49,7 +49,19 @@ impl TcpStream {
 
 impl<'a> Read for &'a TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        (&self.inner).read(buf)
+        // if we get the error kind WouldBlock, that means there is more data to read
+        // and the right thing to do is to re-register the event, getting notified once more
+        // data is available. We'll not do that in our implementation since we're making an example
+        match (&self.inner).read(buf) {
+            Err(e) => {
+                if e.kind() == io::ErrorKind::WouldBlock {
+                    // instead we do this shortcut: if there is more data to read we just block
+                    // and wait for it
+                    self.inner.set_nonblocking(false);
+                    return self.inner.read_to_end(&mut buf);
+                }
+            }
+        }
     }
 
     /// Copies data to fill each buffer in order, with the final buffer possibly only beeing 

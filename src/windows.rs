@@ -4,12 +4,57 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::net;
+use std::io::{self, Read};
+
 use super::MAXEVENTS;
 
     pub type Event = ffi::WSABUF;
 
     pub struct TcpStream {
-        inner: net
+        inner: net::TcpStream,
+        buffer: Vec<u8>,
+        status: TcpReadiness, 
+    }
+
+    enum TcpReadiness {
+        Ready,
+        NotReady
+    }
+
+    impl TcpStream {
+        pub fn connect(adr: net::SocketAddr) -> io::Result<Self> {
+            
+            // This is a shortcut since this will block when establishing the connection.
+            // There are several ways of avoiding this.
+            // a) Obtrain the socket using system calls, set it to non_blocking 
+            // b) use the crate [net2](https://docs.rs/net2/0.2.33/net2/index.html) which
+            // defines a trait with default implementation for TcpStream which allow us to set
+            // it to non-blocking before we connect
+            let mut stream = net::TcpStream::connect(adr)?;
+            stream.set_nonblocking(true)?;
+
+            Ok(TcpStream {
+                inner: stream,
+                buffer: vec![1024],
+                status: TcpReadiness::NotReady,
+            })
+        }
+    }
+
+    impl Read for TcpStream {
+        fn read_to_end(&mut self, buff: &mut Vec<u8>) -> io::Result<usize> {
+            match self.status {
+                Ready => {
+                    self.inner.read_to_end(&mut buff)
+                },
+                NotReady => {
+                    return Err(io::Error::from(io::ErrorKind::WouldBlock));
+                }
+            };
+
+            Ok(buff.len())
+        }
     }
 
     enum ErrorTypes {
@@ -29,8 +74,6 @@ use super::MAXEVENTS;
     }
 
     pub struct Selector {
-        has_error: Arc<AtomicUsize>,
-        errors: Arc<Mutex<Vec<String>>>,
         queue_handle: i32,
     }
 
@@ -39,13 +82,8 @@ use super::MAXEVENTS;
             // set up the queue
             let queue_handle = ffi::create_queue()?;
 
-            let has_error = Arc::new(AtomicUsize::new(0));
-            let errors = Arc::new(Mutex::new(vec![]));
-
             let (loop_event_tx, loop_event_rx) = channel::<ffi::IOCPevent>();
 
-            let errors_cloned = errors.clone();
-            let has_error_clone = has_error.clone();
             thread::spawn(move || {
                 let events = vec![ffi::IOCPevent::default(); MAXEVENTS];
                 loop {
@@ -54,17 +92,11 @@ use super::MAXEVENTS;
                     // handle recieved events
                     let n = 0;
                     let iocp_event = events[n].clone();
-                    if let Err(e) = loop_event_tx.send(iocp_event) {
-                        has_error_clone.store(1, Ordering::Relaxed);
-                        let mut guard = errors_cloned.lock().expect("Mutex Poisoned");
-                        (&mut guard).push(format!("Error: {:?}\nEvent: {:?}", e, events[n]));
-                    }
+                    loop_event_tx.send(iocp_event).expect("Channel error");
                 }
             });
 
             Ok(Selector {
-                has_error,
-                errors,
                 queue_handle,
             })
         }
