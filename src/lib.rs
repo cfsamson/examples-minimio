@@ -25,8 +25,6 @@ impl Id {
     }
 }
 
-pub type Events = Vec<Event>;
-
 pub mod Interests {
     pub const WRITABLE: u8 = 0b0000_0001;
     pub const READABLE: u8 = 0b0000_0010;
