@@ -1,7 +1,9 @@
 use std::net;
+use std::ptr;
+use std::time::Duration;
 use std::io::{self, Read, IoSliceMut};
 use std::os::unix::io::{AsRawFd, RawFd};
-use crate::ID;
+use crate::{ID, Events, Interests};
 
 pub struct Selector {
     id: usize,
@@ -24,7 +26,24 @@ impl Selector {
         self.id
     }
 
-    pub fn select()
+    /// This function blocks and waits until an event has been recieved. It never times out.
+    pub fn select(&self, events: &mut Events) -> io::Result<()> {
+        events.clear();
+        ffi::syscall_kevent(self.kq, &[], events, 0)
+        .map(|n_events| {
+            // This is safe because `kevent` ensures that `n_events` are
+            // assigned.
+            unsafe { events.set_len(n_events as usize) };
+        })
+    }
+
+    pub fn register(&self, fd: RawFd, id: usize, interests: Interests) -> io::Result<()> {
+        let flags = ffi::EV_ADD | ffi::EV_ENABLE |  ffi::EV_ONESHOT;
+
+        if interests.is_readable() {
+            let kevent = ffi::
+        }
+    }
 }
 
 pub type Event = ffi::Kevent;
@@ -62,6 +81,7 @@ impl<'a> Read for &'a TcpStream {
                 }
             }
         }
+        Ok(buf.len())
     }
 
     /// Copies data to fill each buffer in order, with the final buffer possibly only beeing 
@@ -105,7 +125,7 @@ mod ffi {
         Ok(fd)
     }
 
-    pub fn create_kevent (
+    pub fn syscall_kevent (
         kq: RawFd,
         cl: &[Kevent],
         el: &mut [Kevent],
@@ -113,8 +133,8 @@ mod ffi {
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
-            let cl_len = cl.len() as i32;
-            let el_len = el.len() as i32;
+            let cl_len = cl.capacity() as i32;
+            let el_len = el.capacity() as i32;
             kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), el_len, timeout)
         };
         if res < 0 {
