@@ -1,10 +1,11 @@
 use std::net;
 use std::ptr;
 use std::time::Duration;
-use std::io::{self, Read, IoSliceMut};
+use std::io::{self, Read, Write, IoSliceMut};
 use std::os::unix::io::{AsRawFd, RawFd};
 use crate::{ID, Events, interests::Interests};
 
+#[derive(Debug)]
 pub struct Selector {
     id: usize,
     kq: RawFd,
@@ -28,8 +29,10 @@ impl Selector {
 
     /// This function blocks and waits until an event has been recieved. It never times out.
     pub fn select(&self, events: &mut Events) -> io::Result<()> {
+        // TODO: get n_events from self
+        let n_events = events.len() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, None)
+        ffi::syscall_kevent(self.kq, &[], events, n_events, None)
         .map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
@@ -46,8 +49,13 @@ impl Selector {
             // if the `Kevent`
             let kevent = ffi::Event::new_read_event(fd, id as u64);
             let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], None)?;
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
+        };
+
+        if interests.is_writable() {
+            unimplemented!();
         }
+
         Ok(())
     }
 }
@@ -74,20 +82,13 @@ impl TcpStream {
 
 impl<'a> Read for &'a TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // if we get the error kind WouldBlock, that means there is more data to read
-        // and the right thing to do is to re-register the event, getting notified once more
+        // If we let the socket operate non-blocking we could get an error of kind `WouldBlock`, 
+        // that means there is more data to read but we would block if we waited for it to arrive.
+        // The right thing to do is to re-register the event, getting notified once more
         // data is available. We'll not do that in our implementation since we're making an example
-        match (&self.inner).read(buf) {
-            Err(e) => {
-                if e.kind() == io::ErrorKind::WouldBlock {
-                    // instead we do this shortcut: if there is more data to read we just block
-                    // and wait for it
-                    self.inner.set_nonblocking(false);
-                    return self.inner.read_to_end(buf);
-                }
-            }
-        }
-        Ok(buf.len())
+        // and instead we make the socket blocking again while we read from it
+        self.inner.set_nonblocking(false)?;
+        (&self.inner).read(buf)
     }
 
     /// Copies data to fill each buffer in order, with the final buffer possibly only beeing 
@@ -98,6 +99,22 @@ impl<'a> Read for &'a TcpStream {
     /// type on unix platforms and `WSABUF` on Windows. Perfect for us.
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut]) -> io::Result<usize> {
         (&self.inner).read_vectored(bufs)
+    }
+}
+
+impl Write for TcpStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+impl AsRawFd for TcpStream {
+    fn as_raw_fd(&self) -> RawFd {
+        self.inner.as_raw_fd()
     }
 }
 
@@ -121,6 +138,17 @@ mod ffi {
             udata: id,
         }
         }
+
+        pub fn zero() -> Self {
+            Event {
+                ident: 0,
+                filter: 0,
+                flags: 0,
+                fflags: 0,
+                data: 0,
+                udata: 0,
+            }
+        }
     }
 
     pub fn queue() -> io::Result<i32> {
@@ -135,16 +163,16 @@ mod ffi {
         kq: RawFd,
         cl: &[Kevent],
         el: &mut [Kevent],
+        n_events: i32,
         timeout: Option<usize>,
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
             // TODO: check if 0 is infinite timeout
             let timeout = timeout.unwrap_or(0);
-
             let cl_len = cl.len() as i32;
             let el_len = el.len() as i32;
-            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), el_len, timeout)
+            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, timeout)
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
@@ -187,13 +215,65 @@ mod ffi {
 mod tests {
     use super::*;
     use std::os::unix::io::AsRawFd;
-    use crate::interests::{Interests, READABLE};
+    use crate::interests::Interests;
     #[test]
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
-        let mut sock = std::net::TcpStream::connect("www.google.com").unwrap();
-        sock.set_nonblocking(true);
+        let sock = std::net::TcpStream::connect("www.google.com:80").unwrap();
+        sock.set_nonblocking(true).expect("Setting socket to nonblocking.");
         let fd = sock.as_raw_fd();
         selector.register(fd, 1, Interests::readable()).unwrap();
+    }
+
+     #[test]
+    fn select_kevent_works() {
+        let selector = Selector::new_with_id(1).unwrap();
+        let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
+        let request =
+            "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+             Host: slowwly.robertomurray.co.uk\r\n\
+             Connection: close\r\n\
+             \r\n";
+        sock
+            .write_all(request.as_bytes())
+            .expect("Error writing to stream");
+
+        let fd = sock.as_raw_fd();
+        selector.register(fd, 99, Interests::readable()).unwrap();
+
+        let mut events = vec![Event::zero()];
+
+        selector.select(&mut events).expect("waiting for event.");
+
+        assert_eq!(events[0].udata, 99);
+    }
+
+       #[test]
+    fn read_kevent_works() {
+        let selector = Selector::new_with_id(1).unwrap();
+        let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
+        let request =
+            "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+             Host: slowwly.robertomurray.co.uk\r\n\
+             Connection: close\r\n\
+             \r\n";
+        sock
+            .write_all(request.as_bytes())
+            .expect("Error writing to stream");
+
+        let fd = sock.as_raw_fd();
+        selector.register(fd, 100, Interests::readable()).unwrap();
+
+        let mut events = vec![Event::zero()];
+
+        selector.select(&mut events).expect("waiting for event.");
+
+        let mut buff = String::new();
+        assert!(buff.is_empty());
+        (&sock).read_to_string(&mut buff).expect("Reading to string.");
+        
+        assert_eq!(events[0].udata, 100);
+        println!("{}", &buff);
+        assert!(!buff.is_empty());
     }
 }
