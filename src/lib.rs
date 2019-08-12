@@ -15,6 +15,8 @@ pub use macos::{Selector, Event, TcpStream};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
+pub type Events = Vec<Event>;
+
 const MAXEVENTS: usize = 1000;
 static ID: Id = Id(AtomicUsize::new(0));
 
@@ -25,11 +27,16 @@ impl Id {
     }
 }
 
-pub mod Interests {
+pub mod interests {
     pub const WRITABLE: u8 = 0b0000_0001;
     pub const READABLE: u8 = 0b0000_0010;
 
     pub struct Interests(u8);
+    impl Interests {
+        pub fn readable() -> Self {
+            Interests(READABLE)
+        }
+    }
     impl Interests {
         pub fn is_readable(&self) -> bool {
             self.0 & READABLE != 0

@@ -3,7 +3,7 @@ use std::ptr;
 use std::time::Duration;
 use std::io::{self, Read, IoSliceMut};
 use std::os::unix::io::{AsRawFd, RawFd};
-use crate::{ID, Events, Interests};
+use crate::{ID, Events, interests::Interests};
 
 pub struct Selector {
     id: usize,
@@ -29,20 +29,26 @@ impl Selector {
     /// This function blocks and waits until an event has been recieved. It never times out.
     pub fn select(&self, events: &mut Events) -> io::Result<()> {
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, 0)
+        ffi::syscall_kevent(self.kq, &[], events, None)
         .map(|n_events| {
-            // This is safe because `kevent` ensures that `n_events` are
-            // assigned.
+            // This is safe because `syscall_kevent` ensures that `n_events` are
+            // assigned. We could check for a valid token for each event to verify so this is
+            // just a performance optimization used in `mio` and copied here.
             unsafe { events.set_len(n_events as usize) };
         })
     }
 
     pub fn register(&self, fd: RawFd, id: usize, interests: Interests) -> io::Result<()> {
         let flags = ffi::EV_ADD | ffi::EV_ENABLE |  ffi::EV_ONESHOT;
-
+ 
         if interests.is_readable() {
-            let kevent = ffi::
+            // We register the id (or most oftenly referred to as a Token) to the `udata` field
+            // if the `Kevent`
+            let kevent = ffi::Event::new_read_event(fd, id as u64);
+            let kevent = [kevent];
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], None)?;
         }
+        Ok(())
     }
 }
 
@@ -77,7 +83,7 @@ impl<'a> Read for &'a TcpStream {
                     // instead we do this shortcut: if there is more data to read we just block
                     // and wait for it
                     self.inner.set_nonblocking(false);
-                    return self.inner.read_to_end(&mut buf);
+                    return self.inner.read_to_end(buf);
                 }
             }
         }
@@ -105,14 +111,14 @@ mod ffi {
 
     pub type Event = Kevent;
     impl Event {
-        fn read_event(fd: RawFd) -> Self {
+        pub fn new_read_event(fd: RawFd, id: u64) -> Self {
             Event {
             ident: fd as u64,
             filter: EVFILT_READ,
             flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
             fflags: 0,
             data: 0,
-            udata: 0,
+            udata: id,
         }
         }
     }
@@ -129,12 +135,15 @@ mod ffi {
         kq: RawFd,
         cl: &[Kevent],
         el: &mut [Kevent],
-        timeout: usize,
+        timeout: Option<usize>,
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
-            let cl_len = cl.capacity() as i32;
-            let el_len = el.capacity() as i32;
+            // TODO: check if 0 is infinite timeout
+            let timeout = timeout.unwrap_or(0);
+
+            let cl_len = cl.len() as i32;
+            let el_len = el.len() as i32;
             kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), el_len, timeout)
         };
         if res < 0 {
@@ -171,4 +180,20 @@ mod ffi {
                 timeout: usize,
             ) -> i32;
         }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::io::AsRawFd;
+    use crate::interests::{Interests, READABLE};
+    #[test]
+    fn create_kevent_works() {
+        let selector = Selector::new_with_id(1).unwrap();
+        let mut sock = std::net::TcpStream::connect("www.google.com").unwrap();
+        sock.set_nonblocking(true);
+        let fd = sock.as_raw_fd();
+        selector.register(fd, 1, Interests::readable()).unwrap();
+    }
 }

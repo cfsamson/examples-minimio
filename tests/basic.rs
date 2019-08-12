@@ -1,4 +1,4 @@
-use minimio::{Poll, Events, TcpStream, Interests};
+use minimio::{Poll, Event, TcpStream, Interests};
 
 // #[test]
 fn main() {
