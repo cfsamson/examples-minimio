@@ -38,7 +38,7 @@ use super::MAXEVENTS;
                 inner: stream,
                 buffer: vec![0_u8; 1024],
                 status: TcpReadiness::NotReady,
-            })
+            }) 
         }
     }
 
@@ -180,6 +180,7 @@ use super::MAXEVENTS;
         }
 
         // https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
+        #[repr(C)]
         pub struct OVERLAPPED {
             internal: ULONG_PTR,
             internal_high: ULONG_PTR,
@@ -333,14 +334,15 @@ use super::MAXEVENTS;
                 Ok(ul_num_entries_removed)
             }
         }
+    }
 
-        #[cfg(test)]
+      #[cfg(test)]
         mod tests {
             use super::*;
+            
             #[test]
-            fn create_queue_works() {
-                let queue = create_queue().unwrap();
-                assert!(queue > 0);
+            fn selector_new_creates_valid_port() {
+                let selector = Selector::new().expect("create completion port failed");
+                //assert!(selector.completion_port > 0);
             }
         }
-    }
