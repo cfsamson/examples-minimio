@@ -1,9 +1,9 @@
+use crate::{interests::Interests, Events, ID};
+use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
 use std::time::Duration;
-use std::io::{self, Read, Write, IoSliceMut};
-use std::os::unix::io::{AsRawFd, RawFd};
-use crate::{ID, Events, interests::Interests};
 
 #[derive(Debug)]
 pub struct Selector {
@@ -32,8 +32,7 @@ impl Selector {
         // TODO: get n_events from self
         let n_events = events.len() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events, None)
-        .map(|n_events| {
+        ffi::syscall_kevent(self.kq, &[], events, n_events, None).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -42,8 +41,8 @@ impl Selector {
     }
 
     pub fn register(&self, fd: RawFd, id: usize, interests: Interests) -> io::Result<()> {
-        let flags = ffi::EV_ADD | ffi::EV_ENABLE |  ffi::EV_ONESHOT;
- 
+        let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
+
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
             // if the `Kevent`
@@ -69,20 +68,18 @@ pub struct TcpStream {
 impl TcpStream {
     pub fn connect(adr: impl net::ToSocketAddrs) -> io::Result<Self> {
         // actually we should set this to non-blocking before we call connect which is not something
-        // we get from the stdlib but could do with a syscall. Let's skip that step in this example. 
+        // we get from the stdlib but could do with a syscall. Let's skip that step in this example.
         // In other words this will block shortly establishing a connection to the remote server
         let stream = net::TcpStream::connect(adr)?;
         stream.set_nonblocking(true)?;
 
-        Ok(TcpStream {
-            inner: stream,
-        })
+        Ok(TcpStream { inner: stream })
     }
 }
 
 impl<'a> Read for &'a TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // If we let the socket operate non-blocking we could get an error of kind `WouldBlock`, 
+        // If we let the socket operate non-blocking we could get an error of kind `WouldBlock`,
         // that means there is more data to read but we would block if we waited for it to arrive.
         // The right thing to do is to re-register the event, getting notified once more
         // data is available. We'll not do that in our implementation since we're making an example
@@ -91,11 +88,11 @@ impl<'a> Read for &'a TcpStream {
         (&self.inner).read(buf)
     }
 
-    /// Copies data to fill each buffer in order, with the final buffer possibly only beeing 
+    /// Copies data to fill each buffer in order, with the final buffer possibly only beeing
     /// partially filled. Now as we'll see this is like it's made for our use case when abstracting
     /// over IOCP AND epoll/kqueue (since we need to buffer anyways).
-    /// 
-    /// IoSliceMut is like `&mut [u8]` but it's guaranteed to be ABI compatible with the `iovec` 
+    ///
+    /// IoSliceMut is like `&mut [u8]` but it's guaranteed to be ABI compatible with the `iovec`
     /// type on unix platforms and `WSABUF` on Windows. Perfect for us.
     fn read_vectored(&mut self, bufs: &mut [IoSliceMut]) -> io::Result<usize> {
         (&self.inner).read_vectored(bufs)
@@ -130,13 +127,13 @@ mod ffi {
     impl Event {
         pub fn new_read_event(fd: RawFd, id: u64) -> Self {
             Event {
-            ident: fd as u64,
-            filter: EVFILT_READ,
-            flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
-            fflags: 0,
-            data: 0,
-            udata: id,
-        }
+                ident: fd as u64,
+                filter: EVFILT_READ,
+                flags: EV_ADD | EV_ENABLE | EV_ONESHOT,
+                fflags: 0,
+                data: 0,
+                udata: id,
+            }
         }
 
         pub fn zero() -> Self {
@@ -159,7 +156,7 @@ mod ffi {
         Ok(fd)
     }
 
-    pub fn syscall_kevent (
+    pub fn syscall_kevent(
         kq: RawFd,
         cl: &[Kevent],
         el: &mut [Kevent],
@@ -181,61 +178,59 @@ mod ffi {
         Ok(res as usize)
     }
 
-        // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L497
-        // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L207
-        #[derive(Debug, Clone, Default)]
-        #[repr(C)]
-        pub struct Kevent {
-            pub ident: u64,
-            pub filter: i16,
-            pub flags: u16,
-            pub fflags: u32,
-            pub data: i64,
-            pub udata: u64,
-        }
+    // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L497
+    // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L207
+    #[derive(Debug, Clone, Default)]
+    #[repr(C)]
+    pub struct Kevent {
+        pub ident: u64,
+        pub filter: i16,
+        pub flags: u16,
+        pub fflags: u32,
+        pub data: i64,
+        pub udata: u64,
+    }
 
-        #[link(name = "c")]
-        extern "C" {
-            /// Returns: positive: file descriptor, negative: error
-            pub(super) fn kqueue() -> i32;
-            /// Returns: nothing, all non zero return values is an error
-            pub(super) fn kevent(
-                kq: i32,
-                changelist: *const Kevent,
-                nchanges: i32,
-                eventlist: *mut Kevent,
-                nevents: i32,
-                timeout: usize,
-            ) -> i32;
-        }
+    #[link(name = "c")]
+    extern "C" {
+        /// Returns: positive: file descriptor, negative: error
+        pub(super) fn kqueue() -> i32;
+        /// Returns: nothing, all non zero return values is an error
+        pub(super) fn kevent(
+            kq: i32,
+            changelist: *const Kevent,
+            nchanges: i32,
+            eventlist: *mut Kevent,
+            nevents: i32,
+            timeout: usize,
+        ) -> i32;
+    }
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::io::AsRawFd;
     use crate::interests::Interests;
+    use std::os::unix::io::AsRawFd;
     #[test]
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
         let sock = std::net::TcpStream::connect("www.google.com:80").unwrap();
-        sock.set_nonblocking(true).expect("Setting socket to nonblocking.");
+        sock.set_nonblocking(true)
+            .expect("Setting socket to nonblocking.");
         let fd = sock.as_raw_fd();
         selector.register(fd, 1, Interests::readable()).unwrap();
     }
 
-     #[test]
+    #[test]
     fn select_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
-        let request =
-            "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
-             Host: slowwly.robertomurray.co.uk\r\n\
-             Connection: close\r\n\
-             \r\n";
-        sock
-            .write_all(request.as_bytes())
+        let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+                       Host: slowwly.robertomurray.co.uk\r\n\
+                       Connection: close\r\n\
+                       \r\n";
+        sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
         let fd = sock.as_raw_fd();
@@ -248,17 +243,15 @@ mod tests {
         assert_eq!(events[0].udata, 99);
     }
 
-       #[test]
+    #[test]
     fn read_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
-        let request =
-            "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
-             Host: slowwly.robertomurray.co.uk\r\n\
-             Connection: close\r\n\
-             \r\n";
-        sock
-            .write_all(request.as_bytes())
+        let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+                       Host: slowwly.robertomurray.co.uk\r\n\
+                       Connection: close\r\n\
+                       \r\n";
+        sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
         let fd = sock.as_raw_fd();
@@ -270,8 +263,10 @@ mod tests {
 
         let mut buff = String::new();
         assert!(buff.is_empty());
-        (&sock).read_to_string(&mut buff).expect("Reading to string.");
-        
+        (&sock)
+            .read_to_string(&mut buff)
+            .expect("Reading to string.");
+
         assert_eq!(events[0].udata, 100);
         println!("{}", &buff);
         assert!(!buff.is_empty());
