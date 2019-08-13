@@ -90,13 +90,12 @@ impl Selector {
         let mut evts = vec![0u8; 256];
         let mut buffers = vec![ffi::WSABUF::new(256, evts.as_mut_ptr())];
         dbg!();
-        let mut read_event = ffi::create_soc_read_event(soc, &mut buffers, ||{
-            println!("READ EVENT HANDLER");
-        })?;
+        let mut read_event = ffi::create_soc_read_event(soc, &mut buffers)?;
 
-        dbg!();
+        
 
         let mut completion_key = ID.next();
+        dbg!(completion_key);
 
         ffi::register_event(self.completion_port, 256, &mut completion_key, &mut read_event)?;
         Ok(())
@@ -203,6 +202,18 @@ mod ffi {
         h_event: HANDLE,
     }
 
+    impl WSAOVERLAPPED {
+        fn zeroed() -> Self {
+            WSAOVERLAPPED {
+                internal: ptr::null_mut(),
+                internal_high: ptr::null_mut(),
+                offset: 0,
+                offset_high: 0,
+                h_event: 0,
+            }
+        }
+    }
+
     // https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
     #[repr(C)]
     pub struct OVERLAPPED {
@@ -306,28 +317,32 @@ mod ffi {
     pub fn create_soc_read_event(
         s: RawSocket,
         wsabuffers: &mut [WSABUF],
-        completion_routine: fn(),
     ) -> Result<WSAOVERLAPPED, io::Error> {
 
-        let mut ol: mem::MaybeUninit<WSAOVERLAPPED> = mem::MaybeUninit::zeroed();
+        //let mut ol: mem::MaybeUninit<WSAOVERLAPPED> = mem::MaybeUninit::zeroed();
+        let mut ol = WSAOVERLAPPED::zeroed();        
         // This actually takes an array of buffers but we will only need one so we can just box it
         // and point to it (there is no difference in memory between a `vec![T; 1]` and a `Box::new(T)`)
-        let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
+        // let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
+        // let mut buffer = vec![0_u8; 256];
+        // let mut b = WSABUF::new(256, buffer.as_mut_ptr()); 
+        let mut bytes_recieved = 0;
+        let mut flags = 0;
+        
         //let num_bytes_recived_ptr: *mut u32 = bytes_recieved;
-        let res = unsafe { WSARecv(s, buff_ptr, 1, ptr::null_mut(), ptr::null_mut(), ol.as_mut_ptr(), completion_routine as *const fn()) };
+        let res = unsafe { WSARecv(s, wsabuffers.as_mut_ptr(), 1, ptr::null_mut(), &mut flags, &mut ol, ptr::null_mut()) };
         if res != 0 {
             let err = unsafe { WSAGetLastError() };
-
             if err == WSA_IO_PENDING {
                 // Everything is OK, and we can wait this with GetQueuedCompletionStatus
-                Ok(unsafe { ol.assume_init() })
+                Ok(ol)
             } else {
                 return Err(std::io::Error::last_os_error());
             }
         } else {
             // The socket is already ready so we don't need to queue it
             // TODO: Avoid queueing this
-            Ok(unsafe { ol.assume_init() })
+            Ok(ol)
         }
     }
 
@@ -345,7 +360,7 @@ mod ffi {
                 overlapped_ptr,
             )
         };
-        if res != 0 {
+        if res == 0 {
             Err(std::io::Error::last_os_error().into())
         } else {
             Ok(())
