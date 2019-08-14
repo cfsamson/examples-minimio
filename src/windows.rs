@@ -105,17 +105,17 @@ impl Selector {
     /// for a timeout and pass it on but we'll not do that in our example.
     pub fn select<'a>(
         &'a mut self,
-        events: &'a mut Vec<ffi::OVERLAPPED_ENTRY<'a>>,
-        awakener: Sender<usize>,
+        events: &'a mut Vec<ffi::OVERLAPPED_ENTRY>,
+        //awakener: Sender<usize>,
     ) -> io::Result<&'a mut [ffi::OVERLAPPED_ENTRY]> {
         // calling GetQueueCompletionStatus will either return a handle to a "port" ready to read or
         // block if the queue is empty.
 
         // first let's clear events for any previous events and wait until we get som more
-        events.clear();
+        //events.clear();
         let mut bytes = 0;
         let mut token: &mut usize = &mut 0;
-        let ul_count = events.len();
+        let ul_count = events.len() as u32;
 
         let removed = ffi::get_queued_completion_status(
             self.completion_port as isize,
@@ -125,7 +125,11 @@ impl Selector {
             false,
         )?;
 
-        let removed_events = &mut events[..removed];
+        println!("REMOVED: {}", removed);
+        
+
+        let removed_events = &mut events[..removed as usize];
+        println!("REMOVED_EVENT: {:?}", removed_events);
         // for evt in removed_events {
         //     // Notify a listener on a different thread that the event with this ID is ready
         //     awakener.send(evt.id()).expect("Channel error!");
@@ -170,16 +174,26 @@ mod ffi {
     }
 
     #[repr(C)]
-    pub struct OVERLAPPED_ENTRY<'a> {
-        lp_completion_key: usize,
-        lp_overlapped: &'a mut OVERLAPPED,
+    #[derive(Debug, Clone)]
+    pub struct OVERLAPPED_ENTRY {
+        lp_completion_key: *mut usize,
+        pub lp_overlapped: *mut OVERLAPPED,
         internal: usize,
         bytes_transferred: u32,
     }
 
-    impl<'a> OVERLAPPED_ENTRY<'a> {
+    impl OVERLAPPED_ENTRY {
         pub fn id(&self) -> usize {
-            self.lp_completion_key
+            unsafe { *self.lp_completion_key }
+        }
+
+        pub fn zeroed() -> Self {
+            OVERLAPPED_ENTRY {
+            lp_completion_key: ptr::null_mut(),
+            lp_overlapped: ptr::null_mut(),
+            internal: 0,
+            bytes_transferred: 0,
+            }
         }
     }
 
@@ -216,6 +230,7 @@ mod ffi {
 
     // https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
     #[repr(C)]
+    #[derive(Debug)]
     pub struct OVERLAPPED {
         internal: ULONG_PTR,
         internal_high: ULONG_PTR,
@@ -230,7 +245,7 @@ mod ffi {
     pub type HANDLE = isize;
     pub type BOOL = bool;
     pub type DWORD = u32;
-    pub type ULONG = usize;
+    pub type ULONG = u32;
     pub type PULONG = *mut ULONG;
     pub type ULONG_PTR = *mut usize;
     pub type PULONG_PTR = *mut ULONG_PTR;
@@ -382,11 +397,11 @@ mod ffi {
     pub fn get_queued_completion_status(
         completion_port: isize,
         completion_port_entries: &mut [OVERLAPPED_ENTRY],
-        ul_count: usize,
+        ul_count: u32,
         timeout: Option<u32>,
         alertable: bool,
-    ) -> io::Result<usize> {
-        let mut ul_num_entries_removed: usize = 0;
+    ) -> io::Result<u32> {
+        let mut ul_num_entries_removed: u32 = 0;
         // can't coerce directly to *mut *mut usize and cant cast `&mut` as `*mut`
         // let completion_key_ptr: *mut &mut usize = completion_key_ptr;
         // // but we can cast a `*mut ...`
@@ -403,7 +418,7 @@ mod ffi {
             )
         };
 
-        if res != 0 {
+        if res == 0 {
             Err(std::io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
@@ -436,5 +451,30 @@ mod tests {
         selector
             .register_soc_read_event(s)
             .expect("Error registering sock read event");
+    }
+
+    #[test]
+    fn selector_select() {
+        let mut selector = Selector::new().expect("create completion port failed");
+        let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
+        let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+                       Host: slowwly.robertomurray.co.uk\r\n\
+                       Connection: close\r\n\
+                       \r\n";
+        sock.write_all(request.as_bytes())
+            .expect("Error writing to stream");
+
+        let s = sock.as_raw_socket();
+        selector
+            .register_soc_read_event(s)
+            .expect("Error registering sock read event");
+        let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![ffi::OVERLAPPED_ENTRY::zeroed(); 256];
+        let events = selector.select(&mut events).expect("Select failed");
+
+        for event in events {
+            let ol = unsafe {&*(event.lp_overlapped)};
+            println!("{:?}", ol);
+            println!("COMPL_KEY: {}", event.id());
+        }
     }
 }
