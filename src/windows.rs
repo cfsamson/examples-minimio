@@ -33,6 +33,7 @@ impl TcpStream {
         // it to non-blocking before we connect
         let stream = net::TcpStream::connect(adr)?;
         stream.set_nonblocking(true)?;
+        dbg!(&stream);
 
         Ok(TcpStream {
             inner: stream,
@@ -86,18 +87,22 @@ impl Selector {
     }
 
     pub fn register_soc_read_event(&mut self, soc: RawSocket) -> io::Result<()> {
-        // TODO: fix that evts is dropped at the end of this fn
+        dbg!(&soc);
         let mut evts = vec![0u8; 256];
         let mut buffers = vec![ffi::WSABUF::new(256, evts.as_mut_ptr())];
+        let mut b = self.buffers.lock().unwrap();
+        b.push(evts);
         dbg!();
         let mut read_event = ffi::create_soc_read_event(soc, &mut buffers)?;
 
+        dbg!(&read_event);
         
 
         let mut completion_key = ID.next();
         dbg!(completion_key);
 
         ffi::register_event(self.completion_port, 256, completion_key as u32, &mut read_event)?;
+        dbg!(&read_event);
         Ok(())
     }
 
@@ -208,6 +213,7 @@ mod ffi {
 
     // Reference: https://docs.microsoft.com/en-us/windows/win32/api/winsock2/ns-winsock2-wsaoverlapped
     #[repr(C)]
+    #[derive(Debug)]
     pub struct WSAOVERLAPPED {
         /// Reserved for internal use
         internal: ULONG_PTR,
@@ -427,6 +433,7 @@ mod ffi {
             )
         };
 
+        dbg!(&res);
         if res == 0 {
             Err(std::io::Error::last_os_error())
         } else {
@@ -466,13 +473,14 @@ mod tests {
     fn selector_select() {
         let mut selector = Selector::new().expect("create completion port failed");
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
-        let request = "GET /delay/2000/url/http://www.google.com HTTP/1.1\r\n\
+        let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
                        Connection: close\r\n\
                        \r\n";
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
-
+        
+        
         let s = sock.as_raw_socket();
         selector
             .register_soc_read_event(s)
@@ -485,5 +493,8 @@ mod tests {
             println!("{:?}", ol);
             println!("COMPL_KEY: {}", event.id().unwrap());
         }
+
+        println!("BUFFERS: {:?}", selector.buffers.lock().unwrap());
+
     }
 }
