@@ -97,7 +97,7 @@ impl Selector {
         let mut completion_key = ID.next();
         dbg!(completion_key);
 
-        ffi::register_event(self.completion_port, 256, &mut completion_key, &mut read_event)?;
+        ffi::register_event(self.completion_port, 256, completion_key as u32, &mut read_event)?;
         Ok(())
     }
 
@@ -176,6 +176,8 @@ mod ffi {
     #[repr(C)]
     #[derive(Debug, Clone)]
     pub struct OVERLAPPED_ENTRY {
+        // Normally a pointer but since it's just passed through we can store whatever valid usize we want. For our case
+        // an Id or Token is more secure than dereferencing som part of memory later.
         lp_completion_key: *mut usize,
         pub lp_overlapped: *mut OVERLAPPED,
         internal: usize,
@@ -183,8 +185,15 @@ mod ffi {
     }
 
     impl OVERLAPPED_ENTRY {
-        pub fn id(&self) -> usize {
-            unsafe { *self.lp_completion_key }
+        pub fn id(&self) -> Option<usize> {
+            
+            if self.lp_completion_key.is_null() {
+                None
+            } else {
+                // since we only use this as a storage for integers in our implementation we just cast this
+                // as an usize since it will NOT be a valid pointer.
+                Some(self.lp_completion_key as usize)
+            }
         }
 
         pub fn zeroed() -> Self {
@@ -292,7 +301,7 @@ mod ffi {
         fn PostQueuedCompletionStatus(
             CompletionPort: HANDLE,
             dwNumberOfBytesTransferred: DWORD,
-            dwCompletionKey: ULONG_PTR,
+            dwCompletionKey: ULONG,
             lpOverlapped: LPWSAOVERLAPPED,
         ) -> i32;
         // https://docs.microsoft.com/nb-no/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatus
@@ -364,7 +373,7 @@ mod ffi {
     pub fn register_event(
         completion_port: isize,
         bytes_to_transfer: u32,
-        completion_key: &mut usize,
+        completion_key: u32,
         overlapped_ptr: &mut WSAOVERLAPPED,
     ) -> io::Result<()> {
         let res = unsafe {
@@ -457,7 +466,7 @@ mod tests {
     fn selector_select() {
         let mut selector = Selector::new().expect("create completion port failed");
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
-        let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+        let request = "GET /delay/2000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
                        Connection: close\r\n\
                        \r\n";
@@ -474,7 +483,7 @@ mod tests {
         for event in events {
             let ol = unsafe {&*(event.lp_overlapped)};
             println!("{:?}", ol);
-            println!("COMPL_KEY: {}", event.id());
+            println!("COMPL_KEY: {}", event.id().unwrap());
         }
     }
 }
