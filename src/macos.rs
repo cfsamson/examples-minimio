@@ -19,7 +19,7 @@ impl Selector {
         })
     }
 
-    fn new() -> io::Result<Self> {
+    pub fn new() -> io::Result<Self> {
         Selector::new_with_id(ID.next())
     }
 

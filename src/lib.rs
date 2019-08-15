@@ -1,6 +1,6 @@
 use std::error;
 use std::fmt;
-use std::io::Read;
+use std::io::{self, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(target_os = "windows")]
@@ -15,6 +15,12 @@ pub use macos::{Event, Selector, TcpStream};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
+#[cfg(target_os = "macos")]
+pub type Source = std::os::unix::io::RawFd;
+
+#[cfg(target_os = "windows")]
+pub type Source = std::os::windows::io::RawSocket;
+
 pub type Events = Vec<Event>;
 
 const MAXEVENTS: usize = 1000;
@@ -25,9 +31,56 @@ impl Id {
     fn next(&self) -> usize {
         self.0.fetch_add(1, Ordering::Relaxed)
     }
+    
+    fn value(&self) -> usize {
+        self.0.load(Ordering::Relaxed)
+    }
 }
 
-pub mod interests {
+pub struct Poll {
+    registry: Registry,
+}
+
+pub struct Registry {
+    selector: Selector,
+}
+
+impl Poll {
+    pub fn new() -> io::Result<Poll> {
+        Selector::new().map(|selector| {
+            Poll {
+                registry: Registry { selector }
+            }
+        })
+    }
+
+    pub fn registry(&self) -> &Registry {
+        &self.registry
+    }
+
+    pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
+        loop {
+            let res = self.registry.selector.select(events);
+
+            match res {
+                Ok(()) => break,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),
+                Err(e) => return Err(e),
+            };
+        }
+
+        Ok(events.len())
+    }
+}
+
+impl Registry {
+    pub fn register(&self, source: Source, token: Id, interests: Interests) -> io::Result<Id> {
+        let t = ID.next();
+        self.selector.register(source, token, interests)?;
+        Ok(token)
+    }
+}
+
     pub const WRITABLE: u8 = 0b0000_0001;
     pub const READABLE: u8 = 0b0000_0010;
 
@@ -46,7 +99,6 @@ pub mod interests {
             self.0 & WRITABLE != 0
         }
     }
-}
 
 pub enum PollStatus<T: Read> {
     WouldBlock,
@@ -54,27 +106,7 @@ pub enum PollStatus<T: Read> {
     Finished,
 }
 
-#[derive(Debug)]
-pub enum ElErr {
-    IoError(String),
-}
 
-impl fmt::Display for ElErr {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        use ElErr::*;
-        match self {
-            IoError(s) => write!(f, "IO Error: {}", s),
-        }
-    }
-}
-
-impl error::Error for ElErr {}
-
-impl From<std::io::Error> for ElErr {
-    fn from(e: std::io::Error) -> ElErr {
-        ElErr::IoError(e.to_string())
-    }
-}
 
 #[cfg(test)]
 mod tests {
