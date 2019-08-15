@@ -1,39 +1,32 @@
-// use minimio::{Poll, Event, TcpStream, interests::Interests};
+use minimio::{Poll, Events, TcpStream, Interests};
+use std::io::{Read, Write};
 
-// // #[test]
-// fn main() {
+#[test]
+fn main() {
+    let mut poll = Poll::new().unwrap();
+    let registry = poll.registry(); //this is different form mio
+    let mut events = Events::with_capacity(1024);
 
-//     let mut event_loop = EventLoop::new();
+    let mut stream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
 
-//     let id = event_loop.register_event(Event::new_get("www.google.com"));
+    let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
+                       Host: slowwly.robertomurray.co.uk\r\n\
+                       Connection: close\r\n\
+                       \r\n";
+    stream.write_all(request.as_bytes()).expect("Error writing to stream");
 
-//     while let Ok((event_id, data)) = event_loop.wait() {
-//         if let id == event_id {
-//             println!("got a response: ", data);
-//         }
-//     }
-// }
+    // We need a way to pass in an id as well
+    let _ = registry.register_with_id(&stream, Interests::readable(), 100).unwrap();
 
-// fn alt2() {
-//     let mut poll = Poll::new().unwrap();
-//     let registry = poll.registry(); //this is different form mio
-//     let mut events = Events::with_capacity(1024);
+       poll.poll(&mut events).unwrap();
+       for event in &events {
+           if event.id().value() == 100 {
+               // Socket connected (could be a spurious wakeup)
+               let mut buffer = String::new();
+               stream.read_to_string(&mut buffer).unwrap();
+               println!("{}", buffer);
+        
+           }
+       }
 
-//     let mut stream = TcpStream::new("www.google.com");
-
-//     // 0 is the ID
-//     let future_stream = registry.register(&stream, 0, Interests::Readable).unwrap();
-
-//     loop {
-//        poll.poll(&mut events, None).unwrap();
-//        for event in events {
-//            if event.id() == 0 {
-//                // Socket connected (could be a spurious wakeup)
-//                let mut buffer = String::new();
-//                stream.read_to_string(&mut buffer).unwrap();
-//                println!(buffer);
-//            }
-//        }
-//     }
-
-// }
+}

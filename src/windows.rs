@@ -11,6 +11,7 @@ use std::mem;
 use super::MAXEVENTS;
 
 pub type Event = ffi::WSABUF;
+pub type Source = std::os::windows::io::RawSocket;
 
 pub struct TcpStream {
     inner: net::TcpStream,
@@ -40,6 +41,10 @@ impl TcpStream {
             buffer: vec![0_u8; 1024],
             status: TcpReadiness::NotReady,
         })
+    }
+
+    pub fn source(&self) -> Source {
+        self.inner.as_raw_socket()
     }
 }
 

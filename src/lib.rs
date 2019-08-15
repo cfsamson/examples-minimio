@@ -11,29 +11,34 @@ pub use windows::{Event, Selector, TcpStream};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{Event, Selector, TcpStream};
+pub use macos::{Event, Selector, TcpStream, Source};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
-#[cfg(target_os = "macos")]
-pub type Source = std::os::unix::io::RawFd;
-
-#[cfg(target_os = "windows")]
-pub type Source = std::os::windows::io::RawSocket;
 
 pub type Events = Vec<Event>;
 
 const MAXEVENTS: usize = 1000;
 static ID: Id = Id(AtomicUsize::new(0));
 
-struct Id(AtomicUsize);
+pub struct Id(AtomicUsize);
 impl Id {
-    fn next(&self) -> usize {
+    pub fn next(&self) -> usize {
         self.0.fetch_add(1, Ordering::Relaxed)
     }
-    
-    fn value(&self) -> usize {
+
+    pub fn value(&self) -> usize {
         self.0.load(Ordering::Relaxed)
+    }
+
+    pub fn new(val: usize) -> Self {
+        Id(AtomicUsize::new(val))
+    }
+}
+
+impl std::cmp::PartialEq for Id {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
     }
 }
 
@@ -61,7 +66,6 @@ impl Poll {
     pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
         loop {
             let res = self.registry.selector.select(events);
-
             match res {
                 Ok(()) => break,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),
@@ -74,10 +78,14 @@ impl Poll {
 }
 
 impl Registry {
-    pub fn register(&self, source: Source, token: Id, interests: Interests) -> io::Result<Id> {
-        let t = ID.next();
-        self.selector.register(source, token, interests)?;
-        Ok(token)
+    pub fn register_with_id(&self, stream: &TcpStream, interests: Interests, token: usize) -> io::Result<Id> {
+        self.selector.register(stream.source(), token, interests)?;
+        Ok(Id::new(token))
+    }
+
+    pub fn register(&self, stream: &TcpStream, interests: Interests) -> io::Result<Id> {
+        let token = ID.next();
+        self.register_with_id(stream, interests, token)
     }
 }
 
@@ -104,14 +112,4 @@ pub enum PollStatus<T: Read> {
     WouldBlock,
     Ready(T),
     Finished,
-}
-
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert!(true);
-    }
 }

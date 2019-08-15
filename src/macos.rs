@@ -1,14 +1,16 @@
-use crate::{interests::Interests, Events, ID};
+use crate::{Interests, Events, ID, Id};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
 use std::time::Duration;
 
+pub type Source = std::os::unix::io::RawFd;
+
 #[derive(Debug)]
 pub struct Selector {
     id: usize,
-    kq: RawFd,
+    kq: Source,
 }
 
 impl Selector {
@@ -30,7 +32,7 @@ impl Selector {
     /// This function blocks and waits until an event has been recieved. It never times out.
     pub fn select(&self, events: &mut Events) -> io::Result<()> {
         // TODO: get n_events from self
-        let n_events = events.len() as i32;
+        let n_events = events.capacity() as i32;
         events.clear();
         ffi::syscall_kevent(self.kq, &[], events, n_events, None).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
@@ -60,6 +62,11 @@ impl Selector {
 }
 
 pub type Event = ffi::Kevent;
+impl Event {
+    pub fn id(&self) -> Id {
+        Id::new(self.udata as usize)
+    }
+}
 
 pub struct TcpStream {
     inner: net::TcpStream,
@@ -75,9 +82,13 @@ impl TcpStream {
 
         Ok(TcpStream { inner: stream })
     }
+
+    pub fn source(&self) -> Source {
+        self.inner.as_raw_fd()
+    }
 }
 
-impl<'a> Read for &'a TcpStream {
+impl Read for TcpStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         // If we let the socket operate non-blocking we could get an error of kind `WouldBlock`,
         // that means there is more data to read but we would block if we waited for it to arrive.
@@ -210,7 +221,7 @@ mod ffi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interests::Interests;
+    use crate::Interests;
     use std::os::unix::io::AsRawFd;
     #[test]
     fn create_kevent_works() {
@@ -263,7 +274,7 @@ mod tests {
 
         let mut buff = String::new();
         assert!(buff.is_empty());
-        (&sock)
+        sock
             .read_to_string(&mut buff)
             .expect("Reading to string.");
 
