@@ -78,12 +78,12 @@ impl Poll {
 }
 
 impl Registry {
-    pub fn register_with_id(&self, stream: &TcpStream, interests: Interests, token: usize) -> io::Result<Id> {
-        self.selector.register(stream.source(), token, interests)?;
+    pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Id> {
+        self.selector.register(stream, token, interests)?;
         Ok(Id::new(token))
     }
 
-    pub fn register(&self, stream: &TcpStream, interests: Interests) -> io::Result<Id> {
+    pub fn register(&self, stream: &mut TcpStream, interests: Interests) -> io::Result<Id> {
         let token = ID.next();
         self.register_with_id(stream, interests, token)
     }

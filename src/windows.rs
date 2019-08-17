@@ -1,4 +1,4 @@
-use crate::{ElErr, Id, ID};
+use crate::{Interests, Id, ID};
 use std::io::{self, Read, Write};
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
@@ -10,19 +10,22 @@ use std::mem;
 
 use super::MAXEVENTS;
 
-pub type Event = ffi::WSABUF;
+pub type Event = ffi::OVERLAPPED_ENTRY;
 pub type Source = std::os::windows::io::RawSocket;
 
+
+#[derive(Debug)]
 pub struct TcpStream {
     inner: net::TcpStream,
     buffer: Vec<u8>,
-    status: TcpReadiness,
+    pos: usize,
+    // status: TcpReadiness,
 }
 
-enum TcpReadiness {
-    Ready,
-    NotReady,
-}
+// enum TcpReadiness {
+//     Ready,
+//     NotReady,
+// }
 
 impl TcpStream {
     pub fn connect(adr: impl net::ToSocketAddrs) -> io::Result<Self> {
@@ -39,7 +42,8 @@ impl TcpStream {
         Ok(TcpStream {
             inner: stream,
             buffer: vec![0_u8; 1024],
-            status: TcpReadiness::NotReady,
+            pos: 0,
+            //status: TcpReadiness::NotReady,
         })
     }
 
@@ -50,7 +54,22 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-        self.inner.read(buff)
+        let mut bytes_read = 0;
+        if self.buffer.len() - bytes_read <= buff.len() {
+            for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
+                *b = *a;
+                bytes_read += 1;
+            }
+
+            Ok(bytes_read)
+        } else {
+            for (b, a) in buff.iter_mut().zip(&self.buffer) {
+                *b = *a;
+                bytes_read += 1;
+            }
+            self.pos += bytes_read;
+            Ok(bytes_read)
+        }
     }
 }
 
@@ -78,7 +97,7 @@ pub struct Selector {
 }
 
 impl Selector {
-    pub fn new() -> Result<Self, ElErr> {
+    pub fn new() -> io::Result<Self> {
         // set up the queue
         let completion_port = ffi::create_completion_port()?;
         dbg!(&completion_port);
@@ -91,14 +110,11 @@ impl Selector {
         })
     }
 
-    pub fn register_soc_read_event(&mut self, soc: RawSocket) -> io::Result<()> {
-        dbg!(&soc);
-        let mut evts = vec![0u8; 256];
-        let mut buffers = vec![ffi::WSABUF::new(256, evts.as_mut_ptr())];
-        let mut b = self.buffers.lock().unwrap();
-        b.push(evts);
-        dbg!();
-        let mut read_event = ffi::create_soc_read_event(soc, &mut buffers)?;
+    pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
+        dbg!(&soc.buffer[0..10]);
+        //let mut evts = vec![0u8; 256];
+        let mut buffers = vec![ffi::WSABUF::new(soc.buffer.len() as u32, soc.buffer.as_mut_ptr())];
+        let mut read_event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut buffers)?;
 
         dbg!(&read_event);
         
@@ -113,19 +129,19 @@ impl Selector {
 
     /// Blocks until an Event has occured. Never times out. We could take a parameter
     /// for a timeout and pass it on but we'll not do that in our example.
-    pub fn select<'a>(
-        &'a mut self,
-        events: &'a mut Vec<ffi::OVERLAPPED_ENTRY>,
+    pub fn select(
+        &mut self,
+        events: &mut Vec<ffi::OVERLAPPED_ENTRY>,
         //awakener: Sender<usize>,
-    ) -> io::Result<&'a mut [ffi::OVERLAPPED_ENTRY]> {
+    ) -> io::Result<()> {
         // calling GetQueueCompletionStatus will either return a handle to a "port" ready to read or
         // block if the queue is empty.
 
         // first let's clear events for any previous events and wait until we get som more
-        //events.clear();
+        events.clear();
         let mut bytes = 0;
         let mut token: &mut usize = &mut 0;
-        let ul_count = events.len() as u32;
+        let ul_count = events.capacity() as u32;
 
         let removed = ffi::get_queued_completion_status(
             self.completion_port as isize,
@@ -138,19 +154,19 @@ impl Selector {
         println!("REMOVED: {}", removed);
         
 
-        let removed_events = &mut events[..removed as usize];
-        println!("REMOVED_EVENT: {:?}", removed_events);
+        events.truncate(removed as usize);
+        println!("REMOVED_EVENT: {:?}", events);
         // for evt in removed_events {
         //     // Notify a listener on a different thread that the event with this ID is ready
         //     awakener.send(evt.id()).expect("Channel error!");
         // }
 
-        Ok(removed_events)
+        Ok(())
     }
 }
 
 mod ffi {
-    use crate::ElErr;
+    use super::*;
     use std::io;
     use std::os::raw::c_void;
     use std::os::windows::io::RawSocket;
@@ -195,14 +211,14 @@ mod ffi {
     }
 
     impl OVERLAPPED_ENTRY {
-        pub fn id(&self) -> Option<usize> {
+        pub fn id(&self) -> Option<Id> {
             
             if self.lp_completion_key.is_null() {
                 None
             } else {
                 // since we only use this as a storage for integers in our implementation we just cast this
                 // as an usize since it will NOT be a valid pointer.
-                Some(self.lp_completion_key as usize)
+                Some(Id::new(self.lp_completion_key as usize))
             }
         }
 
@@ -333,13 +349,13 @@ mod ffi {
 
     // ===== SAFE WRAPPERS =====
 
-    pub fn create_completion_port() -> Result<isize, ElErr> {
+    pub fn create_completion_port() -> io::Result<isize> {
         unsafe {
             // number_of_concurrent_threads = 0 means use the number of physical threads but the argument is
             // ignored when existing_completionport is set to null.
             let res = CreateIoCompletionPort(INVALID_HANDLE_VALUE, 0, ptr::null_mut(), 0);
             if (res as *mut usize).is_null() {
-                return Err(std::io::Error::last_os_error().into());
+                return Err(std::io::Error::last_os_error());
             }
 
             Ok(res)
@@ -468,9 +484,8 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        let s = sock.as_raw_socket();
         selector
-            .register_soc_read_event(s)
+            .register(&mut sock, 1, Interests::readable())
             .expect("Error registering sock read event");
     }
 
@@ -486,17 +501,17 @@ mod tests {
             .expect("Error writing to stream");
         
         
-        let s = sock.as_raw_socket();
+        
         selector
-            .register_soc_read_event(s)
+            .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![ffi::OVERLAPPED_ENTRY::zeroed(); 256];
-        let events = selector.select(&mut events).expect("Select failed");
+        selector.select(&mut events).expect("Select failed");
 
         for event in events {
             let ol = unsafe {&*(event.lp_overlapped)};
             println!("{:?}", ol);
-            println!("COMPL_KEY: {}", event.id().unwrap());
+            println!("COMPL_KEY: {:?}", event.id().unwrap().value());
         }
 
         println!("BUFFERS: {:?}", selector.buffers.lock().unwrap());

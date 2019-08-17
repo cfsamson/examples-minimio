@@ -16,11 +16,11 @@ fn main() {
     stream.write_all(request.as_bytes()).expect("Error writing to stream");
 
     // We need a way to pass in an id as well
-    let _ = registry.register_with_id(&stream, Interests::readable(), 100).unwrap();
+    let _ = registry.register_with_id(&mut stream, Interests::readable(), 100).unwrap();
 
        poll.poll(&mut events).unwrap();
        for event in &events {
-           if event.id().value() == 100 {
+           if event.id().unwrap().value() == 100 {
                // Socket connected (could be a spurious wakeup)
                let mut buffer = String::new();
                stream.read_to_string(&mut buffer).unwrap();
