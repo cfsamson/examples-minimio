@@ -42,8 +42,9 @@ impl Selector {
         })
     }
 
-    pub fn register(&self, fd: RawFd, id: usize, interests: Interests) -> io::Result<()> {
+    pub fn register(&self, stream: &mut TcpStream, id: usize, interests: Interests) -> io::Result<()> {
         let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
+        let fd = stream.as_raw_fd();
 
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
@@ -226,11 +227,9 @@ mod tests {
     #[test]
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
-        let sock = std::net::TcpStream::connect("www.google.com:80").unwrap();
-        sock.set_nonblocking(true)
-            .expect("Setting socket to nonblocking.");
-        let fd = sock.as_raw_fd();
-        selector.register(fd, 1, Interests::readable()).unwrap();
+        let mut sock = TcpStream::connect("www.google.com:80").unwrap();
+
+        selector.register(&mut sock, 1, Interests::readable()).unwrap();
     }
 
     #[test]
@@ -244,8 +243,7 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        let fd = sock.as_raw_fd();
-        selector.register(fd, 99, Interests::readable()).unwrap();
+        selector.register(&mut sock, 99, Interests::readable()).unwrap();
 
         let mut events = vec![Event::zero()];
 
@@ -265,8 +263,7 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        let fd = sock.as_raw_fd();
-        selector.register(fd, 100, Interests::readable()).unwrap();
+        selector.register(&mut sock, 100, Interests::readable()).unwrap();
 
         let mut events = vec![Event::zero()];
 
