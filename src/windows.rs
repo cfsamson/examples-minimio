@@ -152,9 +152,13 @@ impl Selector {
         )?;
 
         println!("REMOVED: {}", removed);
+
+        unsafe {
+            events.set_len(removed as usize);
+        }
         
 
-        events.truncate(removed as usize);
+        
         println!("REMOVED_EVENT: {:?}", events);
         // for evt in removed_events {
         //     // Notify a listener on a different thread that the event with this ID is ready
@@ -510,7 +514,7 @@ mod tests {
 
         for event in events {
             let ol = unsafe {&*(event.lp_overlapped)};
-            println!("{:?}", ol);
+            println!("EVT_OVERLAPPED {:?}", ol);
             println!("COMPL_KEY: {:?}", event.id().unwrap().value());
         }
 
