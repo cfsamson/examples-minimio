@@ -35,6 +35,9 @@ impl TcpStream {
         // b) use the crate [net2](https://docs.rs/net2/0.2.33/net2/index.html) which
         // defines a trait with default implementation for TcpStream which allow us to set
         // it to non-blocking before we connect
+
+        // Rust creates a WSASocket set to overlapped by default which is just what we need
+        // https://github.com/rust-lang/rust/blob/f86521e0a33a2b54c4c23dbfc5250013f7a33b11/src/libstd/sys/windows/net.rs#L99
         let stream = net::TcpStream::connect(adr)?;
         stream.set_nonblocking(true)?;
         dbg!(&stream);
@@ -54,22 +57,23 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-        let mut bytes_read = 0;
-        if self.buffer.len() - bytes_read <= buff.len() {
-            for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
-                *b = *a;
-                bytes_read += 1;
-            }
+      self.inner.read(buff)  
+    //     let mut bytes_read = 0;
+    //     if self.buffer.len() - bytes_read <= buff.len() {
+    //         for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
+    //             *b = *a;
+    //             bytes_read += 1;
+    //         }
 
-            Ok(bytes_read)
-        } else {
-            for (b, a) in buff.iter_mut().zip(&self.buffer) {
-                *b = *a;
-                bytes_read += 1;
-            }
-            self.pos += bytes_read;
-            Ok(bytes_read)
-        }
+    //         Ok(bytes_read)
+    //     } else {
+    //         for (b, a) in buff.iter_mut().zip(&self.buffer) {
+    //             *b = *a;
+    //             bytes_read += 1;
+    //         }
+    //         self.pos += bytes_read;
+    //         Ok(bytes_read)
+    //     }
     }
 }
 
@@ -278,12 +282,41 @@ mod ffi {
         h_event: HANDLE,
     }
 
+    #[repr(C)]
+    pub struct WSADATA {
+        w_version: u16,
+        i_max_sockets: u16,
+        i_max_u_dp_dg: u16,
+        lp_vendor_info: u8,
+        sz_description: [u8; WSADESCRIPTION_LEN + 1],
+        sz_system_status: [u8; WSASYS_STATUS_LEN + 1],
+    }
+
+    impl Default for WSADATA {
+        fn default() -> WSADATA {
+            WSADATA {
+                w_version: 0,
+                i_max_sockets: 0,
+                i_max_u_dp_dg: 0,
+                lp_vendor_info: 0,
+                sz_description: [0_u8; WSADESCRIPTION_LEN + 1],
+                sz_system_status: [0_u8; WSASYS_STATUS_LEN + 1],
+            }
+        }
+    }
+
+    /// See this for a thorough explanation: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=b92fdec5f2fca0d05d47bb5ecbfb5f68
+    fn makeword(low: u8, high: u8) -> u16 {
+        ((high as u16) << 8) + low as u16
+}
+
     // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
     /// The HANDLE type is actually a `*mut c_void` but windows preserves backwards compatibility by allowing
     /// a INVALID_HANDLE_VALUE which is `-1`. We can't express that in Rust so it's much easier for us to treat
     /// this as an isize instead;
     pub type HANDLE = isize;
     pub type BOOL = bool;
+    pub type WORD = u16;
     pub type DWORD = u32;
     pub type ULONG = u32;
     pub type PULONG = *mut ULONG;
@@ -307,6 +340,9 @@ mod ffi {
     // Interpreted as an i32 the value is -1
     // see for yourself: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=4b93de7d7eb43fa9cd7f5b60933d8935
     pub const INFINITE: u32 = 0xFFFFFFFF;
+
+    pub const WSADESCRIPTION_LEN: usize = 256;
+    pub const WSASYS_STATUS_LEN: usize = 128;
 
     #[link(name = "Kernel32")]
     extern "stdcall" {
@@ -344,6 +380,10 @@ mod ffi {
             dwMilliseconds: DWORD,
             fAlertable: BOOL,
         ) -> i32;
+
+        // https://docs.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsastartup
+        fn WSAStartup(wVersionRequired: u16, lpWSAData: &mut WSADATA) -> i32;
+
         // https://docs.microsoft.com/nb-no/windows/win32/api/handleapi/nf-handleapi-closehandle
         fn CloseHandle(hObject: HANDLE) -> i32;
 
@@ -352,6 +392,17 @@ mod ffi {
     }
 
     // ===== SAFE WRAPPERS =====
+
+    pub fn wsa_startup() -> io::Result<()> {
+        let mut wsadata = WSADATA::default();
+        let res = unsafe { WSAStartup(makeword(2,2), &mut wsadata) };
+
+        if res != 0 {
+            return Err( io::Error::from_raw_os_error(res));
+        }
+
+        Ok(())
+    }
 
     pub fn create_completion_port() -> io::Result<isize> {
         unsafe {
@@ -392,7 +443,7 @@ mod ffi {
                 // Everything is OK, and we can wait this with GetQueuedCompletionStatus
                 Ok(ol)
             } else {
-                return Err(std::io::Error::last_os_error());
+                Err(std::io::Error::last_os_error())
             }
         } else {
             // The socket is already ready so we don't need to queue it
@@ -459,8 +510,10 @@ mod ffi {
         };
 
         dbg!(&res);
-        if res == 0 {
-            Err(std::io::Error::last_os_error())
+        if res == 0 {   
+            
+            
+        Err(std::io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
         }
@@ -495,6 +548,7 @@ mod tests {
 
     #[test]
     fn selector_select() {
+        ffi::wsa_startup().expect("error on wsa init");
         let mut selector = Selector::new().expect("create completion port failed");
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
@@ -511,6 +565,7 @@ mod tests {
             .expect("Error registering sock read event");
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![ffi::OVERLAPPED_ENTRY::zeroed(); 256];
         selector.select(&mut events).expect("Select failed");
+       
 
         for event in events {
             let ol = unsafe {&*(event.lp_overlapped)};
@@ -518,7 +573,10 @@ mod tests {
             println!("COMPL_KEY: {:?}", event.id().unwrap().value());
         }
 
-        println!("BUFFERS: {:?}", selector.buffers.lock().unwrap());
+        // let mut buffer = String::new();
+        // sock.read_to_string(&mut buffer).unwrap();
+
+        // println!("BUFFERS: {:?}", buffer);
 
     }
 }
