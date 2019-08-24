@@ -18,6 +18,9 @@ pub type Source = std::os::windows::io::RawSocket;
 pub struct TcpStream {
     inner: net::TcpStream,
     buffer: Vec<u8>,
+    wsabuf: Vec<ffi::WSABUF>,
+    event: Option<ffi::WSAOVERLAPPED>,
+    token: Option<usize>,
     pos: usize,
     // status: TcpReadiness,
 }
@@ -40,11 +43,15 @@ impl TcpStream {
         // https://github.com/rust-lang/rust/blob/f86521e0a33a2b54c4c23dbfc5250013f7a33b11/src/libstd/sys/windows/net.rs#L99
         let stream = net::TcpStream::connect(adr)?;
         stream.set_nonblocking(true)?;
-        dbg!(&stream);
 
+        let mut buffer = vec![0_u8; 1024];
+        let wsabuf =  vec![ffi::WSABUF::new(buffer.len() as u32, buffer.as_mut_ptr())];
         Ok(TcpStream {
             inner: stream,
-            buffer: vec![0_u8; 1024],
+            buffer,
+            wsabuf,
+            event: None,
+            token: None,
             pos: 0,
             //status: TcpReadiness::NotReady,
         })
@@ -57,23 +64,23 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-      self.inner.read(buff)  
-    //     let mut bytes_read = 0;
-    //     if self.buffer.len() - bytes_read <= buff.len() {
-    //         for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
-    //             *b = *a;
-    //             bytes_read += 1;
-    //         }
+    //   self.inner.read(buff)  
+        let mut bytes_read = 0;
+        if self.buffer.len() - bytes_read <= buff.len() {
+            for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
+                *b = *a;
+                bytes_read += 1;
+            }
 
-    //         Ok(bytes_read)
-    //     } else {
-    //         for (b, a) in buff.iter_mut().zip(&self.buffer) {
-    //             *b = *a;
-    //             bytes_read += 1;
-    //         }
-    //         self.pos += bytes_read;
-    //         Ok(bytes_read)
-    //     }
+            Ok(bytes_read)
+        } else {
+            for (b, a) in buff.iter_mut().zip(&self.buffer) {
+                *b = *a;
+                bytes_read += 1;
+            }
+            self.pos += bytes_read;
+            Ok(bytes_read)
+        }
     }
 }
 
@@ -104,7 +111,6 @@ impl Selector {
     pub fn new() -> io::Result<Self> {
         // set up the queue
         let completion_port = ffi::create_completion_port()?;
-        dbg!(&completion_port);
         let id = ID.next();
 
         Ok(Selector {
@@ -115,19 +121,17 @@ impl Selector {
     }
 
     pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-        dbg!(&soc.buffer[0..10]);
+        println!("REGISTERING SOCKET WITJ COMPLETION PORT");
+        ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
+        println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
         //let mut evts = vec![0u8; 256];
-        let mut buffers = vec![ffi::WSABUF::new(soc.buffer.len() as u32, soc.buffer.as_mut_ptr())];
-        let mut read_event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut buffers)?;
+        let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
+        soc.event = Some(event);
+        soc.token = Some(token);    
 
-        dbg!(&read_event);
-        
-
-        let mut completion_key = ID.next();
-        dbg!(completion_key);
-
-        ffi::register_event(self.completion_port, 256, completion_key as u32, &mut read_event)?;
-        dbg!(&read_event);
+        println!("EVENT REGISTERED: {:?}", soc.event);
+        // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
+        //println!("READ_EVET_AFTER_REGISTER: {:?}", &read_event);
         Ok(())
     }
 
@@ -147,15 +151,13 @@ impl Selector {
         let mut token: &mut usize = &mut 0;
         let ul_count = events.capacity() as u32;
 
-        let removed = ffi::get_queued_completion_status(
+        let removed = ffi::get_queued_completion_status_ex(
             self.completion_port as isize,
             events,
             ul_count,
-            None,
+            Some(2500),
             false,
         )?;
-
-        println!("REMOVED: {}", removed);
 
         unsafe {
             events.set_len(removed as usize);
@@ -191,7 +193,7 @@ mod ffi {
     }
 
     #[repr(C)]
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     pub struct WSABUF {
         len: u32,
         buf: *mut u8,
@@ -276,7 +278,7 @@ mod ffi {
     #[repr(C)]
     #[derive(Debug)]
     pub struct OVERLAPPED {
-        internal: ULONG_PTR,
+        pub internal: ULONG_PTR,
         internal_high: ULONG_PTR,
         dummy: [DWORD; 2],
         h_event: HANDLE,
@@ -381,8 +383,8 @@ mod ffi {
             fAlertable: BOOL,
         ) -> i32;
 
-        // https://docs.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-wsastartup
-        fn WSAStartup(wVersionRequired: u16, lpWSAData: &mut WSADATA) -> i32;
+
+        fn GetQueuedCompletionStatus(CompletionPort: HANDLE, lpNumberOfBytesTransferred: LPDWORD, lpCompletionKey: PULONG_PTR, lpOverlapped: LPOVERLAPPED, dwMilliseconds: DWORD) -> i32;
 
         // https://docs.microsoft.com/nb-no/windows/win32/api/handleapi/nf-handleapi-closehandle
         fn CloseHandle(hObject: HANDLE) -> i32;
@@ -392,17 +394,6 @@ mod ffi {
     }
 
     // ===== SAFE WRAPPERS =====
-
-    pub fn wsa_startup() -> io::Result<()> {
-        let mut wsadata = WSADATA::default();
-        let res = unsafe { WSAStartup(makeword(2,2), &mut wsadata) };
-
-        if res != 0 {
-            return Err( io::Error::from_raw_os_error(res));
-        }
-
-        Ok(())
-    }
 
     pub fn create_completion_port() -> io::Result<isize> {
         unsafe {
@@ -415,6 +406,17 @@ mod ffi {
 
             Ok(res)
         }
+    }
+
+    /// Returns the file handle to the completion port we passed in
+    pub fn connect_socket_to_completion_port(s: RawSocket, completion_port: isize, token: usize) -> io::Result<isize> {
+        let res = unsafe { CreateIoCompletionPort(s as isize, completion_port, token as *mut usize, 0)};
+
+        if (res as *mut usize).is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+
+        Ok(res)
     }
 
     /// Creates a socket read event.
@@ -437,6 +439,7 @@ mod ffi {
         
         //let num_bytes_recived_ptr: *mut u32 = bytes_recieved;
         let res = unsafe { WSARecv(s, wsabuffers.as_mut_ptr(), 1, ptr::null_mut(), &mut flags, &mut ol, ptr::null_mut()) };
+        println!("WSARECV_OVERLAPPED: {:?}", ol);
         if res != 0 {
             let err = unsafe { WSAGetLastError() };
             if err == WSA_IO_PENDING {
@@ -485,7 +488,7 @@ mod ffi {
     ///
     /// ## Returns
     /// The number of items actually removed from the queue
-    pub fn get_queued_completion_status(
+    pub fn get_queued_completion_status_ex(
         completion_port: isize,
         completion_port_entries: &mut [OVERLAPPED_ENTRY],
         ul_count: u32,
@@ -509,7 +512,38 @@ mod ffi {
             )
         };
 
-        dbg!(&res);
+        if res == 0 {   
+            
+            
+        Err(std::io::Error::last_os_error())
+        } else {
+            Ok(ul_num_entries_removed)
+        }
+    }
+
+    pub fn get_queued_completion_status(
+        completion_port: isize,
+        bytes_transferred: &mut u32,
+        completion_key: usize,
+        overlapped: &mut OVERLAPPED,
+        timeout: Option<u32>,
+    ) -> io::Result<u32> {
+        let mut ul_num_entries_removed: u32 = 0;
+        // can't coerce directly to *mut *mut usize and cant cast `&mut` as `*mut`
+        // let completion_key_ptr: *mut &mut usize = completion_key_ptr;
+        // // but we can cast a `*mut ...`
+        // let completion_key_ptr: *mut *mut usize = completion_key_ptr as *mut *mut usize;
+        let timeout = timeout.unwrap_or(INFINITE);
+        let res = unsafe {
+            GetQueuedCompletionStatus(
+                completion_port,
+                bytes_transferred,
+                completion_key as *mut *mut usize,
+                overlapped,
+                timeout,
+            )
+        };
+
         if res == 0 {   
             
             
@@ -548,7 +582,6 @@ mod tests {
 
     #[test]
     fn selector_select() {
-        ffi::wsa_startup().expect("error on wsa init");
         let mut selector = Selector::new().expect("create completion port failed");
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
@@ -558,25 +591,28 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
         
-        
-        
+    
         selector
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");
-        let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![ffi::OVERLAPPED_ENTRY::zeroed(); 256];
+        let mut entry = ffi::OVERLAPPED_ENTRY::zeroed();
+        let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![entry; 255];
         selector.select(&mut events).expect("Select failed");
        
 
         for event in events {
             let ol = unsafe {&*(event.lp_overlapped)};
             println!("EVT_OVERLAPPED {:?}", ol);
+            println!("OVERLAPPED_STATUS {:?}", ol.internal as usize );
             println!("COMPL_KEY: {:?}", event.id().unwrap().value());
         }
 
-        // let mut buffer = String::new();
-        // sock.read_to_string(&mut buffer).unwrap();
+        println!("SOCKET AFTER EVENT RETURN: {:?}", sock);
 
-        // println!("BUFFERS: {:?}", buffer);
+        let mut buffer = String::new();
+        sock.read_to_string(&mut buffer).unwrap();
+
+        println!("BUFFERS: {:?}", buffer);
 
     }
 }
