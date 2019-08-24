@@ -121,13 +121,15 @@ impl Selector {
     }
 
     pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-        println!("REGISTERING SOCKET WITJ COMPLETION PORT");
+        println!("REGISTERING SOCKET WITH COMPLETION PORT");
+        
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
         println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
         //let mut evts = vec![0u8; 256];
         let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
         soc.event = Some(event);
-        soc.token = Some(token);    
+        soc.token = Some(token);
+        
 
         println!("EVENT REGISTERED: {:?}", soc.event);
         // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
