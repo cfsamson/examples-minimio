@@ -1,4 +1,4 @@
-use crate::{Interests, Events, ID, Id};
+use crate::{Interests, Events, TOKEN, Token};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -22,7 +22,7 @@ impl Selector {
     }
 
     pub fn new() -> io::Result<Self> {
-        Selector::new_with_id(ID.next())
+        Selector::new_with_id(TOKEN.next())
     }
 
     pub fn id(&self) -> usize {
@@ -42,7 +42,7 @@ impl Selector {
         })
     }
 
-    pub fn register(&self, stream: &mut TcpStream, id: usize, interests: Interests) -> io::Result<()> {
+    pub fn register(&self, stream: &TcpStream, id: usize, interests: Interests) -> io::Result<()> {
         let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
         let fd = stream.as_raw_fd();
 
@@ -64,8 +64,8 @@ impl Selector {
 
 pub type Event = ffi::Kevent;
 impl Event {
-    pub fn id(&self) -> Id {
-        Id::new(self.udata as usize)
+    pub fn id(&self) -> Token {
+        Token::new(self.udata as usize)
     }
 }
 

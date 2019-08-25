@@ -19,10 +19,10 @@ pub use macos::{Event, Selector, TcpStream, Source};
 pub type Events = Vec<Event>;
 
 const MAXEVENTS: usize = 1000;
-static ID: Id = Id(AtomicUsize::new(0));
+static TOKEN: Token = Token(AtomicUsize::new(0));
 
-pub struct Id(AtomicUsize);
-impl Id {
+pub struct Token(AtomicUsize);
+impl Token {
     pub fn next(&self) -> usize {
         self.0.fetch_add(1, Ordering::Relaxed)
     }
@@ -32,11 +32,11 @@ impl Id {
     }
 
     pub fn new(val: usize) -> Self {
-        Id(AtomicUsize::new(val))
+        Token(AtomicUsize::new(val))
     }
 }
 
-impl std::cmp::PartialEq for Id {
+impl std::cmp::PartialEq for Token {
     fn eq(&self, other: &Self) -> bool {
         self.value() == other.value()
     }
@@ -78,13 +78,13 @@ impl Poll {
 }
 
 impl Registry {
-    pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Id> {
+    pub fn register_with_id(&self, stream: &TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
         self.selector.register(stream, token, interests)?;
-        Ok(Id::new(token))
+        Ok(Token::new(token))
     }
 
-    pub fn register(&self, stream: &mut TcpStream, interests: Interests) -> io::Result<Id> {
-        let token = ID.next();
+    pub fn register(&self, stream: &TcpStream, interests: Interests) -> io::Result<Token> {
+        let token = TOKEN.next();
         self.register_with_id(stream, interests, token)
     }
 }
