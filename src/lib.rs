@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{Event, Selector, TcpStream};
+pub use windows::{Event, Selector, TcpStream, Registrator};
 
 #[cfg(target_os = "macos")]
 mod macos;
@@ -59,8 +59,18 @@ impl Poll {
         })
     }
 
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    pub fn registrator(&self) -> Registrator {
+        self.registry.selector.registrator()
+    }
+
+    pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
+        self.registry.selector.register(stream, token, interests)?;
+        Ok(Token::new(token))
+    }
+
+    pub fn register(&self, stream: &mut TcpStream, interests: Interests) -> io::Result<Token> {
+        let token = TOKEN.next();
+        self.register_with_id(stream, interests, token)
     }
 
     pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
@@ -77,17 +87,6 @@ impl Poll {
     }
 }
 
-impl Registry {
-    pub fn register_with_id(&self, stream: &TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
-        self.selector.register(stream, token, interests)?;
-        Ok(Token::new(token))
-    }
-
-    pub fn register(&self, stream: &TcpStream, interests: Interests) -> io::Result<Token> {
-        let token = TOKEN.next();
-        self.register_with_id(stream, interests, token)
-    }
-}
 
     pub const WRITABLE: u8 = 0b0000_0001;
     pub const READABLE: u8 = 0b0000_0010;
@@ -107,9 +106,3 @@ impl Registry {
             self.0 & WRITABLE != 0
         }
     }
-
-pub enum PollStatus<T: Read> {
-    WouldBlock,
-    Ready(T),
-    Finished,
-}

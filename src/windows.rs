@@ -1,4 +1,4 @@
-use crate::{Interests, Id, ID};
+use crate::{Interests, Token, TOKEN};
 use std::io::{self, Read, Write};
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
@@ -100,6 +100,37 @@ impl AsRawSocket for TcpStream {
     }
 }
 
+pub struct Registrator {
+    completion_port: isize,
+}
+
+impl Registrator {
+        pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
+        println!("REGISTERING SOCKET WITH COMPLETION PORT");
+
+        ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
+        println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
+        //let mut evts = vec![0u8; 256];
+
+        let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
+        //soc.event = Some(event);
+        //soc.token = Some(token);
+        
+
+        println!("EVENT REGISTERED: {:?}", soc.event);
+        // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
+        //println!("READ_EVET_AFTER_REGISTER: {:?}", &read_event);
+        Ok(())
+    }
+
+    pub fn close_loop(&self) -> io::Result<()> {
+        let mut overlapped = ffi::WSAOVERLAPPED::zeroed();
+        ffi::post_queued_completion_status(self.completion_port, 0, u32::max_value(), &mut overlapped)?;
+        Ok(())
+
+    }
+}
+
 // possible Arc<InnerSelector> needed
 pub struct Selector {
     id: usize,
@@ -111,7 +142,7 @@ impl Selector {
     pub fn new() -> io::Result<Self> {
         // set up the queue
         let completion_port = ffi::create_completion_port()?;
-        let id = ID.next();
+        let id = TOKEN.next();
 
         Ok(Selector {
             completion_port,
@@ -120,15 +151,22 @@ impl Selector {
         })
     }
 
+    pub fn registrator(&self) -> Registrator {
+        Registrator {
+            completion_port: self.completion_port,
+        }
+    }
+
     pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
         println!("REGISTERING SOCKET WITH COMPLETION PORT");
-        
+
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
         println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
         //let mut evts = vec![0u8; 256];
+
         let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
-        soc.event = Some(event);
-        soc.token = Some(token);
+        //soc.event = Some(event);
+        //soc.token = Some(token);
         
 
         println!("EVENT REGISTERED: {:?}", soc.event);
@@ -157,7 +195,7 @@ impl Selector {
             self.completion_port as isize,
             events,
             ul_count,
-            Some(2500),
+            None,
             false,
         )?;
 
@@ -223,14 +261,14 @@ mod ffi {
     }
 
     impl OVERLAPPED_ENTRY {
-        pub fn id(&self) -> Option<Id> {
+        pub fn token(&self) -> Option<Token> {
             
             if self.lp_completion_key.is_null() {
                 None
             } else {
                 // since we only use this as a storage for integers in our implementation we just cast this
                 // as an usize since it will NOT be a valid pointer.
-                Some(Id::new(self.lp_completion_key as usize))
+                Some(Token::new(self.lp_completion_key as usize))
             }
         }
 
@@ -265,7 +303,7 @@ mod ffi {
     }
 
     impl WSAOVERLAPPED {
-        fn zeroed() -> Self {
+        pub fn zeroed() -> Self {
             WSAOVERLAPPED {
                 internal: ptr::null_mut(),
                 internal_high: ptr::null_mut(),
@@ -457,7 +495,7 @@ mod ffi {
         }
     }
 
-    pub fn register_event(
+    pub fn post_queued_completion_status(
         completion_port: isize,
         bytes_to_transfer: u32,
         completion_key: u32,
@@ -569,6 +607,7 @@ mod tests {
     #[test]
     fn selector_register() {
         let mut selector = Selector::new().expect("create completion port failed");
+        let registrator = selector.registrator();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
@@ -577,7 +616,7 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        selector
+        registrator
             .register(&mut sock, 1, Interests::readable())
             .expect("Error registering sock read event");
     }
@@ -585,6 +624,7 @@ mod tests {
     #[test]
     fn selector_select() {
         let mut selector = Selector::new().expect("create completion port failed");
+        let registrator = selector.registrator();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
@@ -594,7 +634,7 @@ mod tests {
             .expect("Error writing to stream");
         
     
-        selector
+        registrator
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");
         let mut entry = ffi::OVERLAPPED_ENTRY::zeroed();
@@ -606,7 +646,7 @@ mod tests {
             let ol = unsafe {&*(event.lp_overlapped)};
             println!("EVT_OVERLAPPED {:?}", ol);
             println!("OVERLAPPED_STATUS {:?}", ol.internal as usize );
-            println!("COMPL_KEY: {:?}", event.id().unwrap().value());
+            println!("COMPL_KEY: {:?}", event.token().unwrap().value());
         }
 
         println!("SOCKET AFTER EVENT RETURN: {:?}", sock);
@@ -614,7 +654,7 @@ mod tests {
         let mut buffer = String::new();
         sock.read_to_string(&mut buffer).unwrap();
 
-        println!("BUFFERS: {:?}", buffer);
+        println!("BUFFERS: {}", buffer);
 
     }
 }
