@@ -7,7 +7,8 @@ use std::io::{Read, Write};
 fn main() {
     // First lets set up a "runtime"
     let poll = Poll::new().unwrap();
-    let (evt_sender, evt_reciever) = channel();
+    let readiness_chan = poll.readiness_channel();
+    let registery = poll.registery();
 
     let mut rt = Runtime {
         events: vec![]
@@ -17,6 +18,7 @@ fn main() {
     thread::spawn(move || {
         let mut events = Events::with_capacity(1024);
         loop {
+            // Problem 1: Poll is moved here!
             poll.poll(&mut events);
             for event in &events {
                 evt_sender.send(event.id());
@@ -35,7 +37,9 @@ fn main() {
     // Mio does this
     // NOTE: On windows, the TcpStream struct can contain an Arc<Mutex<Vec<u8>>> where it leaves
     // a reference to the buffer with our selector that which can fill it when data is ready
-    poll.registry().register_with_id(&stream, Interests::readable(), 10);
+    
+    // PROBLEM 2: We need to use registry here
+    registry.register_with_id(&stream, Interests::readable(), 10);
 
     // When we get notified that 10 is ready we can run this code
     rt.spawn(10, move || {
@@ -48,9 +52,9 @@ fn main() {
 
     // ===== THIS WILL BE IN OUR MAIN EVENT LOOP ======
     // But we'll only check if we have gotten anything, not block 
-    while let Ok(event) = evt_reciever.recv() {
+    while let Ok(token) = readiness_chan.recv() {
         // Running the code for event
-        rt.run(event.value()); // runs the code associated with event 10 in this case
+        rt.run(event.value(), data); // runs the code associated with event 10 in this case
     }
 }
 
@@ -69,3 +73,43 @@ impl Runtime {
         f();
     }
 }
+
+
+/// The plan:
+/// 
+/// Poll {
+///     selector: Arc<Selector>,
+/// }
+/// 
+/// fn selector() -> Arc<Selector> // this can be used even though poll is moved
+/// 
+/// which means we can do:
+/// selector.register(...)
+/// 
+/// Now register() can't mutate our TcpStream, it can however get the Socket Handle from it
+/// 
+/// When we register a "socket"
+/// -> we create a buffer in Selecor together with the Token
+///    (this buffer gets filled on completion)
+/// 
+/// When poll returns we know that event X has occurred and the buffer that is stored in Selector is filled
+///  -> But how do we get this data to our TcpStream??
+/// 
+/// We have event X with the Token and the data 
+/// 
+/// We know a callback with Socket X is waiting to be ran when Event X happens
+/// 
+/// But we have no communication between Socket X and Selector...
+/// 
+/// Now...
+/// 
+/// poll.register()
+/// could instead return both a Poll instance and a ReadinessQueue
+/// 
+/// Register works as suggested above but select retains a Arc<Mutex<Vec<u8>>> to the streams buffer.
+/// ONCE the event is completed and the primary buffer is filled, we fill the Arc<Mutex<>> from TcpStream on windows
+///  -> On Unix we do nothing
+/// 
+/// the poll instance could be moved
+/// and we retain the channel and we could call readiness.get_events() -> and retrieve any events 
+/// and we can use regisrator.register() as before

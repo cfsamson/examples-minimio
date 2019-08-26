@@ -34,7 +34,7 @@ impl TcpStream {
     pub fn connect(adr: impl net::ToSocketAddrs) -> io::Result<Self> {
         // This is a shortcut since this will block when establishing the connection.
         // There are several ways of avoiding this.
-        // a) Obtrain the socket using system calls, set it to non_blocking
+        // a) Obtrain the socket using system calls, set it to non_blocking before we connect
         // b) use the crate [net2](https://docs.rs/net2/0.2.33/net2/index.html) which
         // defines a trait with default implementation for TcpStream which allow us to set
         // it to non-blocking before we connect
