@@ -11,7 +11,7 @@ pub use windows::{Event, Selector, TcpStream, Registrator};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{Event, Selector, TcpStream, Source};
+pub use macos::{Event, Selector, TcpStream, Source, Registrator};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
@@ -64,7 +64,7 @@ impl Poll {
     }
 
     pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
-        self.registry.selector.register(stream, token, interests)?;
+        self.registry.selector.registrator().register(stream, token, interests)?;
         Ok(Token::new(token))
     }
 
