@@ -16,6 +16,9 @@ fn proposed_api() {
         events: vec![]
     };
 
+    // This is the token we will provide
+    let provided_token = 10;
+
     // Set up the epoll/IOCP event loop
     let handle = thread::spawn(move || {
         let mut events = Events::with_capacity(1024);
@@ -24,12 +27,13 @@ fn proposed_api() {
             let mut will_close = false;
             poll.poll(&mut events).unwrap();
             for event in &events {
-                println!("GOT EVENT: {:?}", event.token().unwrap().value());
-                let value = event.token().unwrap().value();
-                if value == u32::max_value() as usize {
+                let event_token = event.token().unwrap().value();
+                println!("GOT EVENT: {:?}", event_token);
+                assert_eq!(provided_token, event_token, "Non matching tokens.");
+                if event_token == u32::max_value() as usize {
                     will_close = true;
                 } else {
-                    evt_sender.send(value).unwrap();
+                    evt_sender.send(event_token).unwrap();
                 }
             }
 
@@ -52,13 +56,14 @@ fn proposed_api() {
     // a reference to the buffer with our selector that which can fill it when data is ready
     
     // PROBLEM 2: We need to use registry here
-    registrator.register(&mut stream, 10, Interests::readable()).unwrap();
+    registrator.register(&stream, provided_token, Interests::readable()).unwrap();
     println!("HERE");
 
     // When we get notified that 10 is ready we can run this code
-    rt.spawn(10, move || {
+    rt.spawn(provided_token, move || {
         let mut buffer = String::new();
         stream.read_to_string(&mut buffer).unwrap();
+        assert!(!buffer.is_empty(), "Got an empty buffer");
         println!("PROPOSED API:\n{}", buffer);
     });
 
@@ -67,10 +72,11 @@ fn proposed_api() {
     // ===== THIS WILL BE IN OUR MAIN EVENT LOOP ======
     // But we'll only check if we have gotten anything, not block 
     println!("WAITING FOR EVENTS");
-    while let Ok(token) = evt_reciever.recv() {
-        println!("RECIEVED EVENT: {:?}", token);
+    while let Ok(recieved_token) = evt_reciever.recv() {
+        assert_eq!(provided_token, recieved_token, "Non matching tokens.");
+        println!("RECIEVED EVENT: {:?}", recieved_token);
         // Running the code for event
-        rt.run(token); // runs the code associated with event 10 in this case
+        rt.run(recieved_token); // runs the code associated with event 10 in this case
         // let's close the event loop since we know we only have 1 event
         registrator.close_loop().unwrap();
     }
@@ -90,7 +96,7 @@ impl Runtime {
 
     fn run(&mut self, event: usize) {
         println!("RUNNING EVENT: {}", event);
-        let (_, f) = self.events.iter_mut().find(|(event, _)| event == event).expect("Couldn't find event.");
+        let (_, f) = self.events.iter_mut().find(|(e, _)| *e == event).expect("Couldn't find event.");
         f();
     }
 }
