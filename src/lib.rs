@@ -15,7 +15,7 @@ pub use macos::{Event, Selector, TcpStream, Source, Registrator};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
-
+pub const LOOP_STOP_SIGNAL: usize = usize::max_value();
 pub type Events = Vec<Event>;
 
 const MAXEVENTS: usize = 1000;

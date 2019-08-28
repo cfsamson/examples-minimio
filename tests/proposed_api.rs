@@ -1,4 +1,4 @@
-use minimio::{Poll, Events, TcpStream, Interests, Token};
+use minimio::{Poll, Events, TcpStream, Interests, LOOP_STOP_SIGNAL};
 use std::thread;
 use std::sync::mpsc::channel;
 use std::io::{Read, Write};
@@ -25,12 +25,12 @@ fn proposed_api() {
         loop {
             println!("POLLING");
             let mut will_close = false;
-            poll.poll(&mut events).unwrap();
+            poll.poll(&mut events).expect("poll errpor");
             for event in &events {
                 let event_token = event.token().unwrap().value();
                 println!("GOT EVENT: {:?}", event_token);
-                assert_eq!(provided_token, event_token, "Non matching tokens.");
-                if event_token == u32::max_value() as usize {
+              
+                if event_token == LOOP_STOP_SIGNAL {
                     will_close = true;
                 } else {
                     evt_sender.send(event_token).unwrap();
@@ -56,7 +56,7 @@ fn proposed_api() {
     // a reference to the buffer with our selector that which can fill it when data is ready
     
     // PROBLEM 2: We need to use registry here
-    registrator.register(&stream, provided_token, Interests::readable()).unwrap();
+    registrator.register(&mut stream, provided_token, Interests::readable()).unwrap();
     println!("HERE");
 
     // When we get notified that 10 is ready we can run this code
