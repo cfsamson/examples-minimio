@@ -25,15 +25,15 @@ fn proposed_api() {
         loop {
             println!("POLLING");
             let mut will_close = false;
-            poll.poll(&mut events).unwrap();
+            poll.poll(&mut events).expect("polling err");
             for event in &events {
-                let event_token = event.token().unwrap().value();
+                let event_token = event.token().expect("token err.").value();
                 println!("GOT EVENT: {:?}", event_token);
                 assert_eq!(provided_token, event_token, "Non matching tokens.");
                 if event_token == u32::max_value() as usize {
                     will_close = true;
                 } else {
-                    evt_sender.send(event_token).unwrap();
+                    evt_sender.send(event_token).expect("send event_token err.");
                 }
             }
 
@@ -56,7 +56,7 @@ fn proposed_api() {
     // a reference to the buffer with our selector that which can fill it when data is ready
     
     // PROBLEM 2: We need to use registry here
-    registrator.register(&stream, provided_token, Interests::readable()).unwrap();
+    registrator.register(&stream, provided_token, Interests::readable()).expect("registration err.");
     println!("HERE");
 
     // When we get notified that 10 is ready we can run this code
@@ -78,9 +78,9 @@ fn proposed_api() {
         // Running the code for event
         rt.run(recieved_token); // runs the code associated with event 10 in this case
         // let's close the event loop since we know we only have 1 event
-        registrator.close_loop().unwrap();
+        registrator.close_loop().expect("close loop err.");
     }
-
+    //handle.join();
     println!("EXITING");
 }
 

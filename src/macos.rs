@@ -3,7 +3,6 @@ use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
-use std::time::Duration;
 
 pub type Source = std::os::unix::io::RawFd;
 
@@ -13,9 +12,7 @@ pub struct Registrator {
 
 impl Registrator {
         pub fn register(&self, stream: &TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-            let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
-            let fd = stream.as_raw_fd();
-
+        let fd = stream.as_raw_fd();
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
             // if the `Kevent`
@@ -215,7 +212,7 @@ mod ffi {
                 fflags: 0,
                 // data is where our timeout will be set but we want to timeout immideately
                 data: 0,
-                udata: u32::max_value() as u64, // TODO: see if windows needs u32...
+                udata: u64::max_value(), // TODO: see if windows needs u32...
             }
         }
 
@@ -255,7 +252,6 @@ mod ffi {
                 None => ptr::null(),
             };
             let cl_len = cl.len() as i32;
-            let el_len = el.len() as i32;
             kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, timeout)
         };
         if res < 0 {

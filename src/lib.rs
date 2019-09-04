@@ -1,5 +1,4 @@
-use std::error;
-use std::fmt;
+
 use std::io::{self, Read};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -17,8 +16,6 @@ pub use macos::{Event, Selector, TcpStream, Source, Registrator};
 
 
 pub type Events = Vec<Event>;
-
-const MAXEVENTS: usize = 1000;
 static TOKEN: Token = Token(AtomicUsize::new(0));
 
 pub struct Token(AtomicUsize);
