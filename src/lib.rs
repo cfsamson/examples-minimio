@@ -14,6 +14,7 @@ pub use macos::{Event, Selector, TcpStream, Source, Registrator};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
+pub const CLOSE_EVENT_TOKEN: u64 = u64::max_value();
 
 pub type Events = Vec<Event>;
 static TOKEN: Token = Token(AtomicUsize::new(0));

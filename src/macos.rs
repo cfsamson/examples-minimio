@@ -1,4 +1,4 @@
-use crate::{Interests, Events, TOKEN, Token};
+use crate::{Interests, Events, TOKEN, Token, CLOSE_EVENT_TOKEN};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -18,7 +18,7 @@ impl Registrator {
             // if the `Kevent`
             let kevent = ffi::Event::new_read_event(fd, token as u64);
             let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
         };
 
         if interests.is_writable() {
@@ -31,7 +31,7 @@ impl Registrator {
     pub fn close_loop(&self) -> io::Result<()> {
             let kevent = ffi::Event::new_wakeup_event();
             let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, Some(0))?;
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
 
         Ok(())
 
@@ -65,7 +65,7 @@ impl Selector {
         // TODO: get n_events from self
         let n_events = events.capacity() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events, None).map(|n_events| {
+        ffi::syscall_kevent(self.kq, &[], events, n_events).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -78,25 +78,6 @@ impl Selector {
             kq: self.kq,
         }
     }
-
-    // pub fn register(&self, stream: &TcpStream, id: usize, interests: Interests) -> io::Result<()> {
-    //     let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
-    //     let fd = stream.as_raw_fd();
-
-    //     if interests.is_readable() {
-    //         // We register the id (or most oftenly referred to as a Token) to the `udata` field
-    //         // if the `Kevent`
-    //         let kevent = ffi::Event::new_read_event(fd, id as u64);
-    //         let kevent = [kevent];
-    //         ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
-    //     };
-
-    //     if interests.is_writable() {
-    //         unimplemented!();
-    //     }
-
-    //     Ok(())
-    // }
 }
 
 pub type Event = ffi::Kevent;
@@ -174,21 +155,13 @@ mod ffi {
     pub const EV_ONESHOT: u16 = 0x10;
     pub const EV_CLEAR: u16 = 0x20;
 
+    #[derive(Debug)]
     #[repr(C)]
     pub(super) struct Timespec {
         /// Seconds
         tv_sec: u32,
         /// Nanoseconds     
         v_nsec: u32,
-    }
-
-    impl Timespec {
-         fn new(seconds: u32, nanoseconds: u32) -> Self {
-             Timespec {
-                 tv_sec: seconds,
-                 v_nsec: nanoseconds,
-             }
-         }
     }
 
     pub type Event = Kevent;
@@ -212,7 +185,7 @@ mod ffi {
                 fflags: 0,
                 // data is where our timeout will be set but we want to timeout immideately
                 data: 0,
-                udata: u64::max_value(), // TODO: see if windows needs u32...
+                udata: CLOSE_EVENT_TOKEN, // TODO: see if windows needs u32...
             }
         }
 
@@ -241,18 +214,11 @@ mod ffi {
         cl: &[Kevent],
         el: &mut [Kevent],
         n_events: i32,
-        timeout: Option<u32>,
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
-            // TODO: check if 0 is infinite timeout
-            let timeout = timeout.map(|n| Timespec::new(n, 0));
-            let timeout = match timeout {
-                Some(t) => &t as *const Timespec,
-                None => ptr::null(),
-            };
             let cl_len = cl.len() as i32;
-            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, timeout)
+            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, ptr::null())
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
@@ -302,7 +268,6 @@ mod ffi {
 mod tests {
     use super::*;
     use crate::Interests;
-    use std::os::unix::io::AsRawFd;
     #[test]
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();

@@ -1,4 +1,4 @@
-use minimio::{Poll, Events, TcpStream, Interests, Token};
+use minimio::{Poll, Events, TcpStream, Interests, CLOSE_EVENT_TOKEN};
 use std::thread;
 use std::sync::mpsc::channel;
 use std::io::{Read, Write};
@@ -29,8 +29,7 @@ fn proposed_api() {
             for event in &events {
                 let event_token = event.token().expect("token err.").value();
                 println!("GOT EVENT: {:?}", event_token);
-                assert_eq!(provided_token, event_token, "Non matching tokens.");
-                if event_token == u32::max_value() as usize {
+                if event_token == CLOSE_EVENT_TOKEN as usize {
                     will_close = true;
                 } else {
                     evt_sender.send(event_token).expect("send event_token err.");
@@ -80,7 +79,7 @@ fn proposed_api() {
         // let's close the event loop since we know we only have 1 event
         registrator.close_loop().expect("close loop err.");
     }
-    //handle.join();
+    handle.join().expect("error joining thread");
     println!("EXITING");
 }
 
