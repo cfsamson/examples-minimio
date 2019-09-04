@@ -1,4 +1,4 @@
-use crate::{Interests, Events, TOKEN, Token, CLOSE_EVENT_TOKEN};
+use crate::{Interests, Events, TOKEN, Token, STOP_SIGNAL};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -185,7 +185,7 @@ mod ffi {
                 fflags: 0,
                 // data is where our timeout will be set but we want to timeout immideately
                 data: 0,
-                udata: CLOSE_EVENT_TOKEN, // TODO: see if windows needs u32...
+                udata: STOP_SIGNAL as u64, // TODO: see if windows needs u32...
             }
         }
 

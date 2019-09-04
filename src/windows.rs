@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::mem;
 
-use super::MAXEVENTS;
+use super::LOOP_STOP_SIGNAL;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 pub type Source = std::os::windows::io::RawSocket;
@@ -125,7 +125,7 @@ impl Registrator {
 
     pub fn close_loop(&self) -> io::Result<()> {
         let mut overlapped = ffi::WSAOVERLAPPED::zeroed();
-        ffi::post_queued_completion_status(self.completion_port, 0, u32::max_value(), &mut overlapped)?;
+        ffi::post_queued_completion_status(self.completion_port, 0, LOOP_STOP_SIGNAL, &mut overlapped)?;
         Ok(())
 
     }
@@ -202,14 +202,6 @@ impl Selector {
         unsafe {
             events.set_len(removed as usize);
         }
-        
-
-        
-        println!("REMOVED_EVENT: {:?}", events);
-        // for evt in removed_events {
-        //     // Notify a listener on a different thread that the event with this ID is ready
-        //     awakener.send(evt.id()).expect("Channel error!");
-        // }
 
         Ok(())
     }
@@ -410,7 +402,7 @@ mod ffi {
         fn PostQueuedCompletionStatus(
             CompletionPort: HANDLE,
             dwNumberOfBytesTransferred: DWORD,
-            dwCompletionKey: ULONG,
+            dwCompletionKey: ULONG_PTR,
             lpOverlapped: LPWSAOVERLAPPED,
         ) -> i32;
         // https://docs.microsoft.com/nb-no/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatus
@@ -434,6 +426,16 @@ mod ffi {
     }
 
     // ===== SAFE WRAPPERS =====
+
+    pub fn close_handle(handle: isize) -> io::Result<()> {
+        let res = unsafe { CloseHandle(handle) };
+
+         if res == 0 {
+            Err(std::io::Error::last_os_error().into())
+        } else {
+            Ok(())
+        }
+    }
 
     pub fn create_completion_port() -> io::Result<isize> {
         unsafe {
@@ -498,14 +500,14 @@ mod ffi {
     pub fn post_queued_completion_status(
         completion_port: isize,
         bytes_to_transfer: u32,
-        completion_key: u32,
+        completion_key: usize,
         overlapped_ptr: &mut WSAOVERLAPPED,
     ) -> io::Result<()> {
         let res = unsafe {
             PostQueuedCompletionStatus(
                 completion_port,
                 bytes_to_transfer,
-                completion_key,
+                completion_key as *mut usize,
                 overlapped_ptr,
             )
         };

@@ -1,4 +1,4 @@
-use minimio::{Poll, Events, TcpStream, Interests, CLOSE_EVENT_TOKEN};
+use minimio::{Poll, Events, TcpStream, Interests, STOP_SIGNAL};
 use std::thread;
 use std::sync::mpsc::channel;
 use std::io::{Read, Write};
@@ -29,7 +29,8 @@ fn proposed_api() {
             for event in &events {
                 let event_token = event.token().expect("token err.").value();
                 println!("GOT EVENT: {:?}", event_token);
-                if event_token == CLOSE_EVENT_TOKEN as usize {
+              
+                if event_token == STOP_SIGNAL {
                     will_close = true;
                 } else {
                     evt_sender.send(event_token).expect("send event_token err.");
