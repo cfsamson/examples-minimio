@@ -27,7 +27,7 @@ fn proposed_api() {
             let mut will_close = false;
             poll.poll(&mut events).expect("polling err");
             for event in &events {
-                let event_token = event.token().expect("token err.").value();
+                let event_token = event.id().value();
                 println!("GOT EVENT: {:?}", event_token);
               
                 if event_token == STOP_SIGNAL {

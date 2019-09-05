@@ -19,7 +19,7 @@ fn main() {
 
        poll.poll(&mut events).unwrap();
        for event in &events {
-           if event.token().unwrap().value() == 100 {
+           if event.id().value() == 100 {
                // Socket connected (could be a spurious wakeup)
                let mut buffer = String::new();
                stream.read_to_string(&mut buffer).unwrap();

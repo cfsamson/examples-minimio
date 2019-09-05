@@ -236,15 +236,9 @@ mod ffi {
     }
 
     impl OVERLAPPED_ENTRY {
-        pub fn token(&self) -> Option<Token> {
-            
-            if self.lp_completion_key.is_null() {
-                None
-            } else {
-                // since we only use this as a storage for integers in our implementation we just cast this
-                // as an usize since it will NOT be a valid pointer.
-                Some(Token::new(self.lp_completion_key as usize))
-            }
+        pub fn id(&self) -> Token {
+           Token::new(self.lp_completion_key as usize)
+
         }
 
         pub fn zeroed() -> Self {
@@ -624,7 +618,7 @@ mod tests {
             let ol = unsafe {&*(event.lp_overlapped)};
             println!("EVT_OVERLAPPED {:?}", ol);
             println!("OVERLAPPED_STATUS {:?}", ol.internal as usize );
-            println!("COMPL_KEY: {:?}", event.token().unwrap().value());
+            println!("COMPL_KEY: {:?}", event.id().value());
         }
 
         println!("SOCKET AFTER EVENT RETURN: {:?}", sock);
