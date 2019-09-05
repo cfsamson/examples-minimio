@@ -131,9 +131,7 @@ impl Registrator {
 
 // possible Arc<InnerSelector> needed
 pub struct Selector {
-    id: usize,
     completion_port: isize,
-    buffers: Mutex<Vec<Vec<u8>>>,
 }
 
 impl Selector {
@@ -144,8 +142,6 @@ impl Selector {
 
         Ok(Selector {
             completion_port,
-            id,
-            buffers: Mutex::new(Vec::with_capacity(256)),
         })
     }
 
@@ -156,18 +152,13 @@ impl Selector {
     }
 
     pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-        println!("REGISTERING SOCKET WITH COMPLETION PORT");
-
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
-        println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
         //let mut evts = vec![0u8; 256];
 
         let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
         //soc.event = Some(event);
         //soc.token = Some(token);
-        
 
-        println!("EVENT REGISTERED: {:?}", soc.event);
         // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
         //println!("READ_EVET_AFTER_REGISTER: {:?}", &read_event);
         Ok(())
@@ -185,8 +176,6 @@ impl Selector {
 
         // first let's clear events for any previous events and wait until we get som more
         events.clear();
-        let mut bytes = 0;
-        let mut token: &mut usize = &mut 0;
         let ul_count = events.capacity() as u32;
 
         let removed = ffi::get_queued_completion_status_ex(
@@ -230,10 +219,6 @@ mod ffi {
     }
 
     impl WSABUF {
-        fn as_vec(self) -> Vec<u8> {
-            unsafe { Vec::from_raw_parts(self.buf, self.len as usize, self.len as usize) }
-        }
-
         pub fn new(len: u32, buf: *mut u8) -> Self {
             WSABUF { len, buf }
         }
@@ -337,11 +322,6 @@ mod ffi {
         }
     }
 
-    /// See this for a thorough explanation: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=b92fdec5f2fca0d05d47bb5ecbfb5f68
-    fn makeword(low: u8, high: u8) -> u16 {
-        ((high as u16) << 8) + low as u16
-}
-
     // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
     /// The HANDLE type is actually a `*mut c_void` but windows preserves backwards compatibility by allowing
     /// a INVALID_HANDLE_VALUE which is `-1`. We can't express that in Rust so it's much easier for us to treat
@@ -358,7 +338,7 @@ mod ffi {
     pub type LPWSABUF = *mut WSABUF;
     pub type LPWSAOVERLAPPED = *mut WSAOVERLAPPED;
     pub type LPOVERLAPPED = *mut OVERLAPPED;
-    pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const fn();
+    pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const extern fn();
 
     // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
     // read this! https://devblogs.microsoft.com/oldnewthing/20040302-00/?p=40443
@@ -474,10 +454,8 @@ mod ffi {
         // let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
         // let mut buffer = vec![0_u8; 256];
         // let mut b = WSABUF::new(256, buffer.as_mut_ptr()); 
-        let mut bytes_recieved = 0;
         let mut flags = 0;
         
-        //let num_bytes_recived_ptr: *mut u32 = bytes_recieved;
         let res = unsafe { WSARecv(s, wsabuffers.as_mut_ptr(), 1, ptr::null_mut(), &mut flags, &mut ol, ptr::null_mut()) };
         println!("WSARECV_OVERLAPPED: {:?}", ol);
         if res != 0 {
@@ -568,7 +546,7 @@ mod ffi {
         overlapped: &mut OVERLAPPED,
         timeout: Option<u32>,
     ) -> io::Result<u32> {
-        let mut ul_num_entries_removed: u32 = 0;
+        let ul_num_entries_removed: u32 = 0;
         // can't coerce directly to *mut *mut usize and cant cast `&mut` as `*mut`
         // let completion_key_ptr: *mut &mut usize = completion_key_ptr;
         // // but we can cast a `*mut ...`
