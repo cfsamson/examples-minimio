@@ -13,8 +13,11 @@ pub use windows::{Event, Registrator, Selector, TcpStream};
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::{Event, Registrator, Selector, Source, TcpStream};
-//#[cfg(target_os="linux")]
-//pub use linux::{Event, EventLoop, EventResult};
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{Event, Registrator, Selector, Source, TcpStream};
 
 pub type Events = Vec<Event>;
 static TOKEN: Token = Token(AtomicUsize::new(0));

@@ -2,6 +2,7 @@
 
 use crate::{Interests, Token};
 use std::io::{self, Read, Write};
+use std::mem;
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -474,7 +475,6 @@ mod ffi {
                 ptr::null_mut(),
             )
         };
-
         if res != 0 {
             let err = unsafe { WSAGetLastError() };
             if err == WSA_IO_PENDING {
