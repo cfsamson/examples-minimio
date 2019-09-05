@@ -1,11 +1,42 @@
-use crate::{Interests, Events, ID, Id};
+use crate::{Interests, Events, TOKEN, Token, STOP_SIGNAL};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
-use std::time::Duration;
 
 pub type Source = std::os::unix::io::RawFd;
+
+pub struct Registrator {
+    kq: Source,
+}
+
+impl Registrator {
+        pub fn register(&self, stream: &TcpStream, token: usize, interests: Interests) -> io::Result<()> {
+        let fd = stream.as_raw_fd();
+        if interests.is_readable() {
+            // We register the id (or most oftenly referred to as a Token) to the `udata` field
+            // if the `Kevent`
+            let kevent = ffi::Event::new_read_event(fd, token as u64);
+            let kevent = [kevent];
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+        };
+
+        if interests.is_writable() {
+            unimplemented!();
+        }
+
+        Ok(())
+    }
+
+    pub fn close_loop(&self) -> io::Result<()> {
+            let kevent = ffi::Event::new_wakeup_event();
+            let kevent = [kevent];
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+
+        Ok(())
+
+    }
+}
 
 #[derive(Debug)]
 pub struct Selector {
@@ -22,7 +53,7 @@ impl Selector {
     }
 
     pub fn new() -> io::Result<Self> {
-        Selector::new_with_id(ID.next())
+        Selector::new_with_id(TOKEN.next())
     }
 
     pub fn id(&self) -> usize {
@@ -34,7 +65,7 @@ impl Selector {
         // TODO: get n_events from self
         let n_events = events.capacity() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events, None).map(|n_events| {
+        ffi::syscall_kevent(self.kq, &[], events, n_events).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -42,30 +73,17 @@ impl Selector {
         })
     }
 
-    pub fn register(&self, stream: &mut TcpStream, id: usize, interests: Interests) -> io::Result<()> {
-        let flags = ffi::EV_ADD | ffi::EV_ENABLE | ffi::EV_ONESHOT;
-        let fd = stream.as_raw_fd();
-
-        if interests.is_readable() {
-            // We register the id (or most oftenly referred to as a Token) to the `udata` field
-            // if the `Kevent`
-            let kevent = ffi::Event::new_read_event(fd, id as u64);
-            let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
-        };
-
-        if interests.is_writable() {
-            unimplemented!();
+    pub fn registrator(&self) -> Registrator {
+        Registrator {
+            kq: self.kq,
         }
-
-        Ok(())
     }
 }
 
 pub type Event = ffi::Kevent;
 impl Event {
-    pub fn id(&self) -> Id {
-        Id::new(self.udata as usize)
+    pub fn id(&self) -> Token {
+        Token::new(self.udata as usize)
     }
 }
 
@@ -131,9 +149,20 @@ mod ffi {
     use super::*;
 
     pub const EVFILT_READ: i16 = -1;
+    pub const EVFILT_TIMER: i16 = -7;
     pub const EV_ADD: u16 = 0x1;
     pub const EV_ENABLE: u16 = 0x4;
     pub const EV_ONESHOT: u16 = 0x10;
+    pub const EV_CLEAR: u16 = 0x20;
+
+    #[derive(Debug)]
+    #[repr(C)]
+    pub(super) struct Timespec {
+        /// Seconds
+        tv_sec: u32,
+        /// Nanoseconds     
+        v_nsec: u32,
+    }
 
     pub type Event = Kevent;
     impl Event {
@@ -145,6 +174,18 @@ mod ffi {
                 fflags: 0,
                 data: 0,
                 udata: id,
+            }
+        }
+
+         pub fn new_wakeup_event() -> Self {
+            Event {
+                ident: 0,
+                filter: EVFILT_TIMER,
+                flags: EV_ADD | EV_ENABLE | EV_CLEAR,
+                fflags: 0,
+                // data is where our timeout will be set but we want to timeout immideately
+                data: 0,
+                udata: STOP_SIGNAL as u64, // TODO: see if windows needs u32...
             }
         }
 
@@ -173,15 +214,11 @@ mod ffi {
         cl: &[Kevent],
         el: &mut [Kevent],
         n_events: i32,
-        timeout: Option<usize>,
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
-            // TODO: check if 0 is infinite timeout
-            let timeout = timeout.unwrap_or(0);
             let cl_len = cl.len() as i32;
-            let el_len = el.len() as i32;
-            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, timeout)
+            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, ptr::null())
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
@@ -203,6 +240,14 @@ mod ffi {
         pub udata: u64,
     }
 
+    impl Kevent {
+        pub fn token(&self) -> Option<Token> {
+            // we have no realiable way of checking if this value is initialized or not but need
+            // an option to be compatible with windows.
+            Some(Token::new(self.udata as usize))
+        }
+    }
+
     #[link(name = "c")]
     extern "C" {
         /// Returns: positive: file descriptor, negative: error
@@ -214,7 +259,7 @@ mod ffi {
             nchanges: i32,
             eventlist: *mut Kevent,
             nevents: i32,
-            timeout: usize,
+            timeout: *const Timespec,
         ) -> i32;
     }
 }
@@ -223,13 +268,13 @@ mod ffi {
 mod tests {
     use super::*;
     use crate::Interests;
-    use std::os::unix::io::AsRawFd;
     #[test]
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
         let mut sock = TcpStream::connect("www.google.com:80").unwrap();
+        let registrator = selector.registrator();
 
-        selector.register(&mut sock, 1, Interests::readable()).unwrap();
+        registrator.register(&mut sock, 1, Interests::readable()).unwrap();
     }
 
     #[test]
@@ -243,7 +288,9 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        selector.register(&mut sock, 99, Interests::readable()).unwrap();
+        let registrator = selector.registrator();
+
+        registrator.register(&sock, 99, Interests::readable()).unwrap();
 
         let mut events = vec![Event::zero()];
 
@@ -263,7 +310,9 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        selector.register(&mut sock, 100, Interests::readable()).unwrap();
+        let mut registrator = selector.registrator();
+
+        registrator.register(&sock, 100, Interests::readable()).unwrap();
 
         let mut events = vec![Event::zero()];
 
