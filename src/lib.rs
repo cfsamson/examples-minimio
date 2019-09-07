@@ -1,5 +1,5 @@
 
-use std::io::{self, Read};
+use std::io;
 use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering}};
 
 #[cfg(target_os = "windows")]
@@ -14,7 +14,6 @@ pub use macos::{Event, Selector, TcpStream, Source, Registrator};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
-pub const STOP_SIGNAL: usize = usize::max_value();
 pub type Events = Vec<Event>;
 static TOKEN: Token = Token(AtomicUsize::new(0));
 
@@ -75,9 +74,7 @@ impl Poll {
     }
 
     pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
-        if self.is_poll_dead.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
-            }
+        
         loop {
             let res = self.registry.selector.select(events);
             match res {
@@ -85,6 +82,10 @@ impl Poll {
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),
                 Err(e) => return Err(e),
             };
+        }
+
+        if self.is_poll_dead.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
         }
 
         Ok(events.len())

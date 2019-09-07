@@ -1,4 +1,4 @@
-use crate::{Interests, Events, TOKEN, Token, STOP_SIGNAL};
+use crate::{Interests, Events, TOKEN, Token};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -14,7 +14,7 @@ pub struct Registrator {
 
 impl Registrator {
         pub fn register(&self, stream: &TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-            if self.is_poll_dead() {
+            if self.is_poll_dead.load(Ordering::SeqCst) {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
             }
 
@@ -35,22 +35,17 @@ impl Registrator {
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
-            if self.is_poll_dead() {
+            // We set already here that the Poll instance is dead since this will be the last
+            // event it will handle
+            if self.is_poll_dead.compare_and_swap(false, true, Ordering::SeqCst) {
                 return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
             }
             let kevent = ffi::Event::new_wakeup_event();
             let kevent = [kevent];
             ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
-
-            // We set already here that the Poll instance is dead since this will be the last
-            // event it will handle
-            self.is_poll_dead.store(true, Ordering::SeqCst);
+            
         Ok(())
 
-    }
-
-    pub fn is_poll_dead(&self) -> bool {
-        self.is_poll_dead.load(Ordering::SeqCst)
     }
 }
 
@@ -202,7 +197,7 @@ mod ffi {
                 fflags: 0,
                 // data is where our timeout will be set but we want to timeout immideately
                 data: 0,
-                udata: STOP_SIGNAL as u64, // TODO: see if windows needs u32...
+                udata: 0, // TODO: see if windows needs u32...
             }
         }
 
@@ -329,7 +324,7 @@ mod tests {
             .expect("Error writing to stream");
 
         let poll_is_dead = Arc::new(AtomicBool::new(false));
-        let mut registrator = selector.registrator(poll_is_dead.clone());
+        let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator.register(&sock, 100, Interests::readable()).unwrap();
 

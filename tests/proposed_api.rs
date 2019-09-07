@@ -1,4 +1,4 @@
-use minimio::{Poll, Events, TcpStream, Interests, STOP_SIGNAL};
+use minimio::{Poll, Events, TcpStream, Interests};
 use std::thread;
 use std::sync::mpsc::channel;
 use std::io::{self, Read, Write};
@@ -28,7 +28,10 @@ fn proposed_api() {
             println!("{:?}", poll);
             match poll.poll(&mut events) {
                 Ok(..) => (),
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => break,
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                    println!("ERROR");
+                    break;
+                    },
                 Err(e) => panic!(e),
             };
             for event in &events {
