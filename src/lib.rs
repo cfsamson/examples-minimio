@@ -1,6 +1,6 @@
 
 use std::io::{self, Read};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering}};
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -39,10 +39,13 @@ impl std::cmp::PartialEq for Token {
     }
 }
 
+#[derive(Debug)]
 pub struct Poll {
     registry: Registry,
+    is_poll_dead: Arc<AtomicBool>,
 }
 
+#[derive(Debug)]
 pub struct Registry {
     selector: Selector,
 }
@@ -51,17 +54,18 @@ impl Poll {
     pub fn new() -> io::Result<Poll> {
         Selector::new().map(|selector| {
             Poll {
-                registry: Registry { selector }
+                registry: Registry { selector },
+                is_poll_dead: Arc::new(AtomicBool::new(false)),
             }
         })
     }
 
     pub fn registrator(&self) -> Registrator {
-        self.registry.selector.registrator()
+        self.registry.selector.registrator(self.is_poll_dead.clone())
     }
 
     pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
-        self.registry.selector.registrator().register(stream, token, interests)?;
+        self.registry.selector.registrator(self.is_poll_dead.clone()).register(stream, token, interests)?;
         Ok(Token::new(token))
     }
 
@@ -71,6 +75,9 @@ impl Poll {
     }
 
     pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
+        if self.is_poll_dead.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
+            }
         loop {
             let res = self.registry.selector.select(events);
             match res {

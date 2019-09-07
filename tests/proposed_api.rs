@@ -1,7 +1,7 @@
 use minimio::{Poll, Events, TcpStream, Interests, STOP_SIGNAL};
 use std::thread;
 use std::sync::mpsc::channel;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 
 #[test]
 
@@ -25,16 +25,17 @@ fn proposed_api() {
         loop {
             println!("POLLING");
             let mut will_close = false;
-            poll.poll(&mut events).expect("polling err");
+            println!("{:?}", poll);
+            match poll.poll(&mut events) {
+                Ok(..) => (),
+                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => break,
+                Err(e) => panic!(e),
+            };
             for event in &events {
                 let event_token = event.token().expect("token err.").value();
                 println!("GOT EVENT: {:?}", event_token);
-              
-                if event_token == STOP_SIGNAL {
-                    will_close = true;
-                } else {
-                    evt_sender.send(event_token).expect("send event_token err.");
-                }
+             
+                evt_sender.send(event_token).expect("send event_token err.");
             }
 
             if will_close {
