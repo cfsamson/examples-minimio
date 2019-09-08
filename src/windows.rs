@@ -1,4 +1,4 @@
-use crate::{Interests, Token, TOKEN, STOP_SIGNAL};
+use crate::{Interests, Token, TOKEN};
 use std::io::{self, Read, Write};
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
