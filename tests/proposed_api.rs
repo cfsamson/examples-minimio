@@ -27,7 +27,7 @@ fn proposed_api() {
             match poll.poll(&mut events) {
                 Ok(..) => (),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                    println!("ERROR");
+                    println!("INTERRUPTED: {}", e);
                     break;
                 }
                 Err(e) => panic!(e),

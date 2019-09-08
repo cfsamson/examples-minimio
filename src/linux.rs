@@ -1,11 +1,15 @@
-use crate::{Events, Interests, Token, STOP_SIGNAL, TOKEN};
+use crate::{Events, Interests, Token, TOKEN};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::ptr;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub struct Registrator {
-    kq: Source,
+    fd: RawFd,
+    is_poll_dead: Arc<AtomicBool>,
 }
 
 impl Registrator {
@@ -15,13 +19,18 @@ impl Registrator {
         token: usize,
         interests: Interests,
     ) -> io::Result<()> {
+        if self.is_poll_dead.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance closed.",
+            ));
+        }
         let fd = stream.as_raw_fd();
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
-            // if the `Kevent`
-            let kevent = ffi::Event::new_read_event(fd, token as u64);
-            let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+            // if the `Kevent` 
+            let mut event = ffi::Event::new(ffi::EPOLLIN | ffi::EPOLLONESHOT, token);
+            epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, fd, &mut event)?;
         };
 
         if interests.is_writable() {
@@ -32,9 +41,20 @@ impl Registrator {
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
-        let kevent = ffi::Event::new_wakeup_event();
-        let kevent = [kevent];
-        ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+        if self
+            .is_poll_dead
+            .compare_and_swap(false, true, Ordering::SeqCst)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance closed.",
+            ));
+        }
+
+        // This is a little hacky but works for our needs right now
+        let wake_fd = eventfd(1, 0)?;
+        let mut event = ffi::Event::new(ffi::EPOLLIN, 0);
+        epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, wake_fd, &mut event)?;
 
         Ok(())
     }
@@ -43,14 +63,15 @@ impl Registrator {
 #[derive(Debug)]
 pub struct Selector {
     id: usize,
-    kq: Source,
+    fd: RawFd,
 }
 
 impl Selector {
     fn new_with_id(id: usize) -> io::Result<Self> {
+        println!("EPOLL CREATE");
         Ok(Selector {
             id,
-            kq: ffi::queue()?,
+            fd: epoll_create()?,
         })
     }
 
@@ -64,10 +85,8 @@ impl Selector {
 
     /// This function blocks and waits until an event has been recieved. It never times out.
     pub fn select(&self, events: &mut Events) -> io::Result<()> {
-        // TODO: get n_events from self
-        let n_events = events.capacity() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events).map(|n_events| {
+        epoll_wait(self.fd, events, 1024, -1).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -75,15 +94,15 @@ impl Selector {
         })
     }
 
-    pub fn registrator(&self) -> Registrator {
-        Registrator { kq: self.kq }
+    pub fn registrator(&self, is_poll_dead: Arc<AtomicBool>) -> Registrator {
+        Registrator { fd: self.fd, is_poll_dead, }
     }
 }
 
-pub type Event = ffi::Kevent;
+pub type Event = ffi::Event;
 impl Event {
     pub fn id(&self) -> Token {
-        Token::new(self.udata as usize)
+        Token::new(self.data().as_usize())
     }
 }
 
@@ -101,10 +120,6 @@ impl TcpStream {
 
         Ok(TcpStream { inner: stream })
     }
-
-    pub fn source(&self) -> Source {
-        self.inner.as_raw_fd()
-    }
 }
 
 impl Read for TcpStream {
@@ -115,6 +130,7 @@ impl Read for TcpStream {
         // data is available. We'll not do that in our implementation since we're making an example
         // and instead we make the socket blocking again while we read from it
         self.inner.set_nonblocking(false)?;
+
         (&self.inner).read(buf)
     }
 
@@ -147,8 +163,76 @@ impl AsRawFd for TcpStream {
 
 mod ffi {
     use std::io;
+    use std::os::raw::c_void;
 
-    pub struct Event {}
+    pub const EPOLL_CTL_ADD: i32 = 1;
+    pub const EPOLL_CTL_DEL: i32 = 2;
+    pub const EPOLLIN: i32 = 0x1;
+    pub const EPOLLONESHOT: i32 = 0x40000000;
+
+    /// This is a new structure for us. The Union type in Rust is there mostly to work with C-type unions. A Union is
+    /// like an untyped enum, meaing that `Data` can be *either* a `uint32` or a `uint64` for exaple. It's easiest to think
+    /// of this like a very primitive Enum. The size of a Union is the size of its largest field.
+    /// You can read more about Unions in Rust here: https://doc.rust-lang.org/reference/items/unions.html
+    #[repr(C)]
+    pub union Data {
+        void: *const c_void,
+        fd: i32,
+        uint32: u32,
+        uint64: u64,
+    }
+
+    /// Modelling `Data` Union to a Enum is not needed since we know what value we pass in and therefore what
+    /// value to expect. We know that the size of `Data` is 8 bytes anyway.
+    pub enum EpollData {
+        Void(*const c_void),
+        Fd(i32),
+        Uint32(u32),
+        Uint64(u64),
+    }
+
+    impl EpollData {
+        pub fn as_usize(&self) -> usize {
+            match self {
+                EpollData::Void(n) => *n as usize,
+                EpollData::Fd(n) => *n as usize,
+                EpollData::Uint32(n) => *n as usize,
+                EpollData::Uint64(n) => *n as usize,
+            }
+        }
+    }
+
+    /// Since the same name is used multiple times, it can be confusing but we have an `Event` structure.
+    /// This structure ties a file descriptor and a field called `events` together. The field `events` holds information
+    /// about what events are ready for that file descriptor.
+    #[repr(C)]
+    pub struct Event {
+        /// This can be confusing, but this is the events that are ready on the file descriptor.
+        events: u32,
+        // TODO: Consider if we should just treat this as a usize instead...
+        epoll_data: Data, 
+    }
+
+    impl Event {
+        pub fn new(events: i32, id: usize) -> Self {
+            Event {
+                events: events as u32,
+                epoll_data: Data {
+                    uint64: id as u64,
+                }
+            }
+        }
+        pub fn data(&self) -> EpollData {
+            unsafe {
+                match self.epoll_data {
+                    Data { void } => EpollData::Void(void),
+                    Data { fd } => EpollData::Fd(fd),
+                    Data { uint32 } => EpollData::Uint32(uint32),
+                    Data { uint64 } => EpollData::Uint64(uint64),
+                }
+            }
+        }
+    }
 
     #[link(name = "c")]
     extern "C" {
@@ -164,13 +248,18 @@ mod ffi {
         /// http://man7.org/linux/man-pages/man2/epoll_wait.2.html
         ///
         /// - epoll_event is a pointer to an array of Events
+        /// - timeout of -1 means indefinite
         pub fn epoll_wait(epfd: i32, events: *mut Event, maxevents: i32, timeout: i32) -> i32;
+
+        /// http://man7.org/linux/man-pages/man2/timerfd_create.2.html
+        pub fn eventfd(initva: u32, flags: i32) -> i32;
     }
 
 }
 
 fn epoll_create() -> io::Result<i32> {
-    let res = unsafe { ffi::epoll_create(0) };
+    // Size argument is ignored but must be greater than zero
+    let res = unsafe { ffi::epoll_create(1) };
     if res < 0 {
         Err(io::Error::last_os_error())
     } else {
@@ -198,8 +287,18 @@ fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: &mut Event) -> io::Result<()> {
 
 /// Waits for events on the epoll instance to occur. Returns the number file descriptors ready for the requested I/O.
 fn epoll_wait(epfd: i32, events: &mut [Event], maxevents: i32, timeout: i32) -> io::Result<i32> {
-    let res = unsafe { ffi::epoll_wait(epfd, events, maxevents, timeout) };
+    let res = unsafe { ffi::epoll_wait(epfd, events.as_mut_ptr(), maxevents, timeout) };
     if res < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(res)
+    }
+}
+
+
+fn eventfd(initva: u32, flags: i32) -> io::Result<i32> {
+    let res = unsafe { ffi::eventfd(initva, flags) };
+     if res < 0 {
         Err(io::Error::last_os_error())
     } else {
         Ok(res)
