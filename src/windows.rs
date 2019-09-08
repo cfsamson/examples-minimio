@@ -2,13 +2,11 @@ use crate::{Interests, Token, TOKEN};
 use std::io::{self, Read, Write};
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::mem;
-
-use super::LOOP_STOP_SIGNAL;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 pub type Source = std::os::windows::io::RawSocket;
@@ -102,36 +100,32 @@ impl AsRawSocket for TcpStream {
 
 pub struct Registrator {
     completion_port: isize,
+    is_poll_dead: Arc<AtomicBool>,
 }
 
 impl Registrator {
         pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-        println!("REGISTERING SOCKET WITH COMPLETION PORT");
+            if self.is_poll_dead.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance is dead."));
+            }
 
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
-        println!("REGISTERING BUFFER: {:?}", &soc.buffer[0..10]);
-        //let mut evts = vec![0u8; 256];
-
         let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
-        //soc.event = Some(event);
-        //soc.token = Some(token);
-        
-
-        println!("EVENT REGISTERED: {:?}", soc.event);
-        // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
-        //println!("READ_EVET_AFTER_REGISTER: {:?}", &read_event);
         Ok(())
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
+         if self.is_poll_dead.compare_and_swap(false, true, Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance is dead."));
+        }
         let mut overlapped = ffi::WSAOVERLAPPED::zeroed();
-        ffi::post_queued_completion_status(self.completion_port, 0, LOOP_STOP_SIGNAL, &mut overlapped)?;
+        ffi::post_queued_completion_status(self.completion_port, 0, 0, &mut overlapped)?;
         Ok(())
-
     }
 }
 
 // possible Arc<InnerSelector> needed
+#[derive(Debug)]
 pub struct Selector {
     id: usize,
     completion_port: isize,
@@ -151,9 +145,10 @@ impl Selector {
         })
     }
 
-    pub fn registrator(&self) -> Registrator {
+    pub fn registrator(&self, is_poll_dead: Arc<AtomicBool>) -> Registrator {
         Registrator {
             completion_port: self.completion_port,
+            is_poll_dead,
         }
     }
 
@@ -609,7 +604,8 @@ mod tests {
     #[test]
     fn selector_register() {
         let mut selector = Selector::new().expect("create completion port failed");
-        let registrator = selector.registrator();
+        let poll_is_alive = Arc::new(AtomicBool::new(false));
+        let registrator = selector.registrator(poll_is_alive.clone());
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
@@ -626,7 +622,8 @@ mod tests {
     #[test]
     fn selector_select() {
         let mut selector = Selector::new().expect("create completion port failed");
-        let registrator = selector.registrator();
+        let poll_is_alive = Arc::new(AtomicBool::new(false));
+        let registrator = selector.registrator(poll_is_alive.clone());
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\

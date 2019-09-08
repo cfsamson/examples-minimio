@@ -60,7 +60,7 @@ fn proposed_api() {
     // a reference to the buffer with our selector that which can fill it when data is ready
     
     // PROBLEM 2: We need to use registry here
-    registrator.register(&stream, provided_token, Interests::readable()).expect("registration err.");
+    registrator.register(&mut stream, provided_token, Interests::readable()).expect("registration err.");
     println!("HERE");
 
     // When we get notified that 10 is ready we can run this code
