@@ -1,12 +1,11 @@
-use crate::{Interests, Token, TOKEN};
+#![allow(non_camel_case_types)]
+
+use crate::{Interests, Token};
 use std::io::{self, Read, Write};
-use std::mem;
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::sync::Arc;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 pub type Source = std::os::windows::io::RawSocket;
@@ -116,8 +115,14 @@ impl Registrator {
             ));
         }
 
-        ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
-        let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
+        ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
+        
+        if interests.is_readable() {
+            ffi::wsa_recv(soc.as_raw_socket(), &mut soc.wsabuf)?;
+        } else {
+            unimplemented!();
+        }
+        
         Ok(())
     }
 
@@ -147,7 +152,6 @@ impl Selector {
     pub fn new() -> io::Result<Self> {
         // set up the queue
         let completion_port = ffi::create_completion_port()?;
-        let id = TOKEN.next();
 
         Ok(Selector { completion_port })
     }
@@ -157,24 +161,6 @@ impl Selector {
             completion_port: self.completion_port,
             is_poll_dead,
         }
-    }
-
-    pub fn register(
-        &self,
-        soc: &mut TcpStream,
-        token: usize,
-        interests: Interests,
-    ) -> io::Result<()> {
-        ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
-        //let mut evts = vec![0u8; 256];
-
-        let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
-        //soc.event = Some(event);
-        //soc.token = Some(token);
-
-        // ffi::register_event(self.completion_port, 256, token as u32, &mut read_event)?;
-        //println!("READ_EVET_AFTER_REGISTER: {:?}", &read_event);
-        Ok(())
     }
 
     /// Blocks until an Event has occured. Never times out. We could take a parameter
@@ -210,8 +196,6 @@ impl Selector {
 mod ffi {
     use super::*;
     use std::io;
-    use std::mem;
-    use std::os::raw::c_void;
     use std::os::windows::io::RawSocket;
     use std::ptr;
 
@@ -440,7 +424,7 @@ mod ffi {
     }
 
     /// Returns the file handle to the completion port we passed in
-    pub fn connect_socket_to_completion_port(
+    pub fn create_io_completion_port(
         s: RawSocket,
         completion_port: isize,
         token: usize,
@@ -458,17 +442,12 @@ mod ffi {
     /// Creates a socket read event.
     /// ## Returns
     /// The number of bytes recieved
-    pub fn create_soc_read_event(
+    pub fn wsa_recv(
         s: RawSocket,
         wsabuffers: &mut [WSABUF],
     ) -> Result<WSAOVERLAPPED, io::Error> {
-        //let mut ol: mem::MaybeUninit<WSAOVERLAPPED> = mem::MaybeUninit::zeroed();
+
         let mut ol = WSAOVERLAPPED::zeroed();
-        // This actually takes an array of buffers but we will only need one so we can just box it
-        // and point to it (there is no difference in memory between a `vec![T; 1]` and a `Box::new(T)`)
-        // let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
-        // let mut buffer = vec![0_u8; 256];
-        // let mut b = WSABUF::new(256, buffer.as_mut_ptr());
         let mut flags = 0;
 
         let res = unsafe {
@@ -482,7 +461,7 @@ mod ffi {
                 ptr::null_mut(),
             )
         };
-        println!("WSARECV_OVERLAPPED: {:?}", ol);
+
         if res != 0 {
             let err = unsafe { WSAGetLastError() };
             if err == WSA_IO_PENDING {
