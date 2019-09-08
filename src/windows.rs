@@ -116,7 +116,7 @@ impl Registrator {
         }
 
         ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
-        
+
         if interests.is_readable() {
             ffi::wsa_recv(soc.as_raw_socket(), &mut soc.wsabuf)?;
         } else {
@@ -190,6 +190,19 @@ impl Selector {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for Selector {
+    fn drop(&mut self) {
+        match ffi::close_handle(self.completion_port) {
+            Ok(..) => (),
+            Err(e) => {
+                if !std::thread::panicking() {
+                    panic!(e);
+                }
+            }
+        }
     }
 }
 
