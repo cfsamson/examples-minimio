@@ -1,17 +1,23 @@
-use crate::{Interests, Events, TOKEN, Token, STOP_SIGNAL};
+use crate::{Interests, Events, TOKEN, Token};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 pub type Source = std::os::unix::io::RawFd;
 
 pub struct Registrator {
     kq: Source,
+    is_poll_dead: Arc<AtomicBool>,
 }
 
 impl Registrator {
         pub fn register(&self, stream: &TcpStream, token: usize, interests: Interests) -> io::Result<()> {
+            if self.is_poll_dead.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
+            }
+
         let fd = stream.as_raw_fd();
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
@@ -29,10 +35,15 @@ impl Registrator {
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
+            // We set already here that the Poll instance is dead since this will be the last
+            // event it will handle
+            if self.is_poll_dead.compare_and_swap(false, true, Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
+            }
             let kevent = ffi::Event::new_wakeup_event();
             let kevent = [kevent];
             ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
-
+            
         Ok(())
 
     }
@@ -73,9 +84,10 @@ impl Selector {
         })
     }
 
-    pub fn registrator(&self) -> Registrator {
+    pub fn registrator(&self, is_poll_dead: Arc<AtomicBool>) -> Registrator {
         Registrator {
             kq: self.kq,
+            is_poll_dead,
         }
     }
 }
@@ -185,7 +197,7 @@ mod ffi {
                 fflags: 0,
                 // data is where our timeout will be set but we want to timeout immideately
                 data: 0,
-                udata: STOP_SIGNAL as u64, // TODO: see if windows needs u32...
+                udata: 0, // TODO: see if windows needs u32...
             }
         }
 
@@ -272,7 +284,8 @@ mod tests {
     fn create_kevent_works() {
         let selector = Selector::new_with_id(1).unwrap();
         let mut sock = TcpStream::connect("www.google.com:80").unwrap();
-        let registrator = selector.registrator();
+        let poll_is_dead = Arc::new(AtomicBool::new(false));
+        let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator.register(&mut sock, 1, Interests::readable()).unwrap();
     }
@@ -287,8 +300,8 @@ mod tests {
                        \r\n";
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
-
-        let registrator = selector.registrator();
+        let poll_is_dead = Arc::new(AtomicBool::new(false));
+        let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator.register(&sock, 99, Interests::readable()).unwrap();
 
@@ -310,7 +323,8 @@ mod tests {
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
 
-        let mut registrator = selector.registrator();
+        let poll_is_dead = Arc::new(AtomicBool::new(false));
+        let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator.register(&sock, 100, Interests::readable()).unwrap();
 
