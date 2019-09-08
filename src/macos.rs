@@ -1,9 +1,12 @@
-use crate::{Interests, Events, TOKEN, Token};
+use crate::{Events, Interests, Token, TOKEN};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::ptr;
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 pub type Source = std::os::unix::io::RawFd;
 
@@ -13,10 +16,18 @@ pub struct Registrator {
 }
 
 impl Registrator {
-        pub fn register(&self, stream: &TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-            if self.is_poll_dead.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
-            }
+    pub fn register(
+        &self,
+        stream: &TcpStream,
+        token: usize,
+        interests: Interests,
+    ) -> io::Result<()> {
+        if self.is_poll_dead.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance closed.",
+            ));
+        }
 
         let fd = stream.as_raw_fd();
         if interests.is_readable() {
@@ -35,17 +46,22 @@ impl Registrator {
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
-            // We set already here that the Poll instance is dead since this will be the last
-            // event it will handle
-            if self.is_poll_dead.compare_and_swap(false, true, Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance closed."));
-            }
-            let kevent = ffi::Event::new_wakeup_event();
-            let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
-            
-        Ok(())
+        // We set already here that the Poll instance is dead since this will be the last
+        // event it will handle
+        if self
+            .is_poll_dead
+            .compare_and_swap(false, true, Ordering::SeqCst)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance closed.",
+            ));
+        }
+        let kevent = ffi::Event::new_wakeup_event();
+        let kevent = [kevent];
+        ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
 
+        Ok(())
     }
 }
 
@@ -189,7 +205,7 @@ mod ffi {
             }
         }
 
-         pub fn new_wakeup_event() -> Self {
+        pub fn new_wakeup_event() -> Self {
             Event {
                 ident: 0,
                 filter: EVFILT_TIMER,
@@ -230,7 +246,14 @@ mod ffi {
         let res = unsafe {
             let kq = kq as i32;
             let cl_len = cl.len() as i32;
-            kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, ptr::null())
+            kevent(
+                kq,
+                cl.as_ptr(),
+                cl_len,
+                el.as_mut_ptr(),
+                n_events,
+                ptr::null(),
+            )
         };
         if res < 0 {
             return Err(io::Error::last_os_error());
@@ -287,7 +310,9 @@ mod tests {
         let poll_is_dead = Arc::new(AtomicBool::new(false));
         let registrator = selector.registrator(poll_is_dead.clone());
 
-        registrator.register(&mut sock, 1, Interests::readable()).unwrap();
+        registrator
+            .register(&mut sock, 1, Interests::readable())
+            .unwrap();
     }
 
     #[test]
@@ -303,7 +328,9 @@ mod tests {
         let poll_is_dead = Arc::new(AtomicBool::new(false));
         let registrator = selector.registrator(poll_is_dead.clone());
 
-        registrator.register(&sock, 99, Interests::readable()).unwrap();
+        registrator
+            .register(&sock, 99, Interests::readable())
+            .unwrap();
 
         let mut events = vec![Event::zero()];
 
@@ -326,7 +353,9 @@ mod tests {
         let poll_is_dead = Arc::new(AtomicBool::new(false));
         let registrator = selector.registrator(poll_is_dead.clone());
 
-        registrator.register(&sock, 100, Interests::readable()).unwrap();
+        registrator
+            .register(&sock, 100, Interests::readable())
+            .unwrap();
 
         let mut events = vec![Event::zero()];
 
@@ -334,9 +363,7 @@ mod tests {
 
         let mut buff = String::new();
         assert!(buff.is_empty());
-        sock
-            .read_to_string(&mut buff)
-            .expect("Reading to string.");
+        sock.read_to_string(&mut buff).expect("Reading to string.");
 
         assert_eq!(events[0].udata, 100);
         println!("{}", &buff);

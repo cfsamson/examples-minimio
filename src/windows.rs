@@ -1,16 +1,15 @@
 use crate::{Interests, Token, TOKEN};
 use std::io::{self, Read, Write};
+use std::mem;
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::mem;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 pub type Source = std::os::windows::io::RawSocket;
-
 
 #[derive(Debug)]
 pub struct TcpStream {
@@ -43,7 +42,7 @@ impl TcpStream {
         stream.set_nonblocking(true)?;
 
         let mut buffer = vec![0_u8; 1024];
-        let wsabuf =  vec![ffi::WSABUF::new(buffer.len() as u32, buffer.as_mut_ptr())];
+        let wsabuf = vec![ffi::WSABUF::new(buffer.len() as u32, buffer.as_mut_ptr())];
         Ok(TcpStream {
             inner: stream,
             buffer,
@@ -62,7 +61,7 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-    //   self.inner.read(buff)  
+        //   self.inner.read(buff)
         let mut bytes_read = 0;
         if self.buffer.len() - bytes_read <= buff.len() {
             for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
@@ -104,10 +103,18 @@ pub struct Registrator {
 }
 
 impl Registrator {
-        pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
-            if self.is_poll_dead.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance is dead."));
-            }
+    pub fn register(
+        &self,
+        soc: &mut TcpStream,
+        token: usize,
+        interests: Interests,
+    ) -> io::Result<()> {
+        if self.is_poll_dead.load(Ordering::SeqCst) {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance is dead.",
+            ));
+        }
 
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
         let event = ffi::create_soc_read_event(soc.as_raw_socket(), &mut soc.wsabuf)?;
@@ -115,8 +122,14 @@ impl Registrator {
     }
 
     pub fn close_loop(&self) -> io::Result<()> {
-         if self.is_poll_dead.compare_and_swap(false, true, Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll instance is dead."));
+        if self
+            .is_poll_dead
+            .compare_and_swap(false, true, Ordering::SeqCst)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Poll instance is dead.",
+            ));
         }
         let mut overlapped = ffi::WSAOVERLAPPED::zeroed();
         ffi::post_queued_completion_status(self.completion_port, 0, 0, &mut overlapped)?;
@@ -136,9 +149,7 @@ impl Selector {
         let completion_port = ffi::create_completion_port()?;
         let id = TOKEN.next();
 
-        Ok(Selector {
-            completion_port,
-        })
+        Ok(Selector { completion_port })
     }
 
     pub fn registrator(&self, is_poll_dead: Arc<AtomicBool>) -> Registrator {
@@ -148,7 +159,12 @@ impl Selector {
         }
     }
 
-    pub fn register(&self, soc: &mut TcpStream, token: usize, interests: Interests) -> io::Result<()> {
+    pub fn register(
+        &self,
+        soc: &mut TcpStream,
+        token: usize,
+        interests: Interests,
+    ) -> io::Result<()> {
         ffi::connect_socket_to_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
         //let mut evts = vec![0u8; 256];
 
@@ -194,10 +210,10 @@ impl Selector {
 mod ffi {
     use super::*;
     use std::io;
+    use std::mem;
     use std::os::raw::c_void;
     use std::os::windows::io::RawSocket;
     use std::ptr;
-    use std::mem;
 
     #[derive(Debug, Clone)]
     pub struct IOCPevent {}
@@ -234,16 +250,15 @@ mod ffi {
 
     impl OVERLAPPED_ENTRY {
         pub fn id(&self) -> Token {
-           Token::new(self.lp_completion_key as usize)
-
+            Token::new(self.lp_completion_key as usize)
         }
 
         pub fn zeroed() -> Self {
             OVERLAPPED_ENTRY {
-            lp_completion_key: ptr::null_mut(),
-            lp_overlapped: ptr::null_mut(),
-            internal: 0,
-            bytes_transferred: 0,
+                lp_completion_key: ptr::null_mut(),
+                lp_overlapped: ptr::null_mut(),
+                internal: 0,
+                bytes_transferred: 0,
             }
         }
     }
@@ -329,7 +344,7 @@ mod ffi {
     pub type LPWSABUF = *mut WSABUF;
     pub type LPWSAOVERLAPPED = *mut WSAOVERLAPPED;
     pub type LPOVERLAPPED = *mut OVERLAPPED;
-    pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const extern fn();
+    pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const extern "C" fn();
 
     // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
     // read this! https://devblogs.microsoft.com/oldnewthing/20040302-00/?p=40443
@@ -384,8 +399,13 @@ mod ffi {
             fAlertable: BOOL,
         ) -> i32;
 
-
-        fn GetQueuedCompletionStatus(CompletionPort: HANDLE, lpNumberOfBytesTransferred: LPDWORD, lpCompletionKey: PULONG_PTR, lpOverlapped: LPOVERLAPPED, dwMilliseconds: DWORD) -> i32;
+        fn GetQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            lpNumberOfBytesTransferred: LPDWORD,
+            lpCompletionKey: PULONG_PTR,
+            lpOverlapped: LPOVERLAPPED,
+            dwMilliseconds: DWORD,
+        ) -> i32;
 
         // https://docs.microsoft.com/nb-no/windows/win32/api/handleapi/nf-handleapi-closehandle
         fn CloseHandle(hObject: HANDLE) -> i32;
@@ -399,7 +419,7 @@ mod ffi {
     pub fn close_handle(handle: isize) -> io::Result<()> {
         let res = unsafe { CloseHandle(handle) };
 
-         if res == 0 {
+        if res == 0 {
             Err(std::io::Error::last_os_error().into())
         } else {
             Ok(())
@@ -420,12 +440,17 @@ mod ffi {
     }
 
     /// Returns the file handle to the completion port we passed in
-    pub fn connect_socket_to_completion_port(s: RawSocket, completion_port: isize, token: usize) -> io::Result<isize> {
-        let res = unsafe { CreateIoCompletionPort(s as isize, completion_port, token as *mut usize, 0)};
+    pub fn connect_socket_to_completion_port(
+        s: RawSocket,
+        completion_port: isize,
+        token: usize,
+    ) -> io::Result<isize> {
+        let res =
+            unsafe { CreateIoCompletionPort(s as isize, completion_port, token as *mut usize, 0) };
 
         if (res as *mut usize).is_null() {
-                return Err(std::io::Error::last_os_error());
-            }
+            return Err(std::io::Error::last_os_error());
+        }
 
         Ok(res)
     }
@@ -437,17 +462,26 @@ mod ffi {
         s: RawSocket,
         wsabuffers: &mut [WSABUF],
     ) -> Result<WSAOVERLAPPED, io::Error> {
-
         //let mut ol: mem::MaybeUninit<WSAOVERLAPPED> = mem::MaybeUninit::zeroed();
-        let mut ol = WSAOVERLAPPED::zeroed();        
+        let mut ol = WSAOVERLAPPED::zeroed();
         // This actually takes an array of buffers but we will only need one so we can just box it
         // and point to it (there is no difference in memory between a `vec![T; 1]` and a `Box::new(T)`)
         // let buff_ptr: *mut WSABUF = wsabuffers.as_mut_ptr();
         // let mut buffer = vec![0_u8; 256];
-        // let mut b = WSABUF::new(256, buffer.as_mut_ptr()); 
+        // let mut b = WSABUF::new(256, buffer.as_mut_ptr());
         let mut flags = 0;
-        
-        let res = unsafe { WSARecv(s, wsabuffers.as_mut_ptr(), 1, ptr::null_mut(), &mut flags, &mut ol, ptr::null_mut()) };
+
+        let res = unsafe {
+            WSARecv(
+                s,
+                wsabuffers.as_mut_ptr(),
+                1,
+                ptr::null_mut(),
+                &mut flags,
+                &mut ol,
+                ptr::null_mut(),
+            )
+        };
         println!("WSARECV_OVERLAPPED: {:?}", ol);
         if res != 0 {
             let err = unsafe { WSAGetLastError() };
@@ -521,10 +555,8 @@ mod ffi {
             )
         };
 
-        if res == 0 {   
-            
-            
-        Err(std::io::Error::last_os_error())
+        if res == 0 {
+            Err(std::io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
         }
@@ -553,10 +585,8 @@ mod ffi {
             )
         };
 
-        if res == 0 {   
-            
-            
-        Err(std::io::Error::last_os_error())
+        if res == 0 {
+            Err(std::io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
         }
@@ -603,20 +633,18 @@ mod tests {
                        \r\n";
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
-        
-    
+
         registrator
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");
         let mut entry = ffi::OVERLAPPED_ENTRY::zeroed();
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![entry; 255];
         selector.select(&mut events).expect("Select failed");
-       
 
         for event in events {
-            let ol = unsafe {&*(event.lp_overlapped)};
+            let ol = unsafe { &*(event.lp_overlapped) };
             println!("EVT_OVERLAPPED {:?}", ol);
-            println!("OVERLAPPED_STATUS {:?}", ol.internal as usize );
+            println!("OVERLAPPED_STATUS {:?}", ol.internal as usize);
             println!("COMPL_KEY: {:?}", event.id().value());
         }
 
@@ -626,6 +654,5 @@ mod tests {
         sock.read_to_string(&mut buffer).unwrap();
 
         println!("BUFFERS: {}", buffer);
-
     }
 }

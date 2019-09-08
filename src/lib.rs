@@ -1,16 +1,18 @@
-
 use std::io;
-use std::sync::{Arc, atomic::{AtomicUsize, AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
 
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{Event, Selector, TcpStream, Registrator};
+pub use windows::{Event, Registrator, Selector, TcpStream};
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{Event, Selector, TcpStream, Source, Registrator};
+pub use macos::{Event, Registrator, Selector, Source, TcpStream};
 //#[cfg(target_os="linux")]
 //pub use linux::{Event, EventLoop, EventResult};
 
@@ -51,20 +53,28 @@ pub struct Registry {
 
 impl Poll {
     pub fn new() -> io::Result<Poll> {
-        Selector::new().map(|selector| {
-            Poll {
-                registry: Registry { selector },
-                is_poll_dead: Arc::new(AtomicBool::new(false)),
-            }
+        Selector::new().map(|selector| Poll {
+            registry: Registry { selector },
+            is_poll_dead: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub fn registrator(&self) -> Registrator {
-        self.registry.selector.registrator(self.is_poll_dead.clone())
+        self.registry
+            .selector
+            .registrator(self.is_poll_dead.clone())
     }
 
-    pub fn register_with_id(&self, stream: &mut TcpStream, interests: Interests, token: usize) -> io::Result<Token> {
-        self.registry.selector.registrator(self.is_poll_dead.clone()).register(stream, token, interests)?;
+    pub fn register_with_id(
+        &self,
+        stream: &mut TcpStream,
+        interests: Interests,
+        token: usize,
+    ) -> io::Result<Token> {
+        self.registry
+            .selector
+            .registrator(self.is_poll_dead.clone())
+            .register(stream, token, interests)?;
         Ok(Token::new(token))
     }
 
@@ -74,7 +84,6 @@ impl Poll {
     }
 
     pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
-        
         loop {
             let res = self.registry.selector.select(events);
             match res {
@@ -85,29 +94,28 @@ impl Poll {
         }
 
         if self.is_poll_dead.load(Ordering::SeqCst) {
-                return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
         }
 
         Ok(events.len())
     }
 }
 
+pub const WRITABLE: u8 = 0b0000_0001;
+pub const READABLE: u8 = 0b0000_0010;
 
-    pub const WRITABLE: u8 = 0b0000_0001;
-    pub const READABLE: u8 = 0b0000_0010;
-
-    pub struct Interests(u8);
-    impl Interests {
-        pub fn readable() -> Self {
-            Interests(READABLE)
-        }
+pub struct Interests(u8);
+impl Interests {
+    pub fn readable() -> Self {
+        Interests(READABLE)
     }
-    impl Interests {
-        pub fn is_readable(&self) -> bool {
-            self.0 & READABLE != 0
-        }
-
-        pub fn is_writable(&self) -> bool {
-            self.0 & WRITABLE != 0
-        }
+}
+impl Interests {
+    pub fn is_readable(&self) -> bool {
+        self.0 & READABLE != 0
     }
+
+    pub fn is_writable(&self) -> bool {
+        self.0 & WRITABLE != 0
+    }
+}
