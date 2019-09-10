@@ -99,6 +99,19 @@ impl Selector {
     }
 }
 
+impl Drop for Selector {
+    fn drop(&mut self) {
+        match close_fd(self.fd) {
+            Ok(..) => (),
+            Err(e) => {
+                if !std::thread::panicking() {
+                    panic!(e);
+                }
+            }
+        }
+    }
+}
+
 pub type Event = ffi::Event;
 impl Event {
     pub fn id(&self) -> Token {
