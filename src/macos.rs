@@ -108,6 +108,19 @@ impl Selector {
     }
 }
 
+impl Drop for Selector {
+    fn drop(&mut self) {
+        match ffi::close_fd(self.kq) {
+            Ok(..) => (),
+            Err(e) => {
+                if !std::thread::panicking() {
+                    panic!(e);
+                }
+            }
+        }
+    }
+}
+
 pub type Event = ffi::Kevent;
 impl Event {
     pub fn id(&self) -> Token {
@@ -262,6 +275,15 @@ mod ffi {
         Ok(res as usize)
     }
 
+    pub fn close_fd(fd: RawFd) -> io::Result<()> {
+        let res = unsafe { ffi::close(fd) };
+        if res < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+
     // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L497
     // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L207
     #[derive(Debug, Clone, Default)]
@@ -296,6 +318,8 @@ mod ffi {
             nevents: i32,
             timeout: *const Timespec,
         ) -> i32;
+
+        pub fn close(d: i32) -> i32;
     }
 }
 
