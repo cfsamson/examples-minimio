@@ -123,7 +123,7 @@ impl Registrator {
         } else {
             unimplemented!();
         }
-        
+
         Ok(())
     }
 
@@ -456,11 +456,7 @@ mod ffi {
     /// Creates a socket read event.
     /// ## Returns
     /// The number of bytes recieved
-    pub fn wsa_recv(
-        s: RawSocket,
-        wsabuffers: &mut [WSABUF],
-    ) -> Result<WSAOVERLAPPED, io::Error> {
-
+    pub fn wsa_recv(s: RawSocket, wsabuffers: &mut [WSABUF]) -> Result<WSAOVERLAPPED, io::Error> {
         let mut ol = WSAOVERLAPPED::zeroed();
         let mut flags = 0;
 

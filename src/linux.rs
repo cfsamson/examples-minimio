@@ -28,7 +28,7 @@ impl Registrator {
         let fd = stream.as_raw_fd();
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
-            // if the `Kevent` 
+            // if the `Kevent`
             let mut event = ffi::Event::new(ffi::EPOLLIN | ffi::EPOLLONESHOT, token);
             epoll_ctl(self.fd, ffi::EPOLL_CTL_ADD, fd, &mut event)?;
         };
@@ -95,7 +95,10 @@ impl Selector {
     }
 
     pub fn registrator(&self, is_poll_dead: Arc<AtomicBool>) -> Registrator {
-        Registrator { fd: self.fd, is_poll_dead, }
+        Registrator {
+            fd: self.fd,
+            is_poll_dead,
+        }
     }
 }
 
@@ -223,16 +226,14 @@ mod ffi {
         /// This can be confusing, but this is the events that are ready on the file descriptor.
         events: u32,
         // TODO: Consider if we should just treat this as a usize instead...
-        epoll_data: Data, 
+        epoll_data: Data,
     }
 
     impl Event {
         pub fn new(events: i32, id: usize) -> Self {
             Event {
                 events: events as u32,
-                epoll_data: Data {
-                    uint64: id as u64,
-                }
+                epoll_data: Data { uint64: id as u64 },
             }
         }
         pub fn data(&self) -> EpollData {
@@ -308,10 +309,9 @@ fn epoll_wait(epfd: i32, events: &mut [Event], maxevents: i32, timeout: i32) -> 
     }
 }
 
-
 fn eventfd(initva: u32, flags: i32) -> io::Result<i32> {
     let res = unsafe { ffi::eventfd(initva, flags) };
-     if res < 0 {
+    if res < 0 {
         Err(io::Error::last_os_error())
     } else {
         Ok(res)
