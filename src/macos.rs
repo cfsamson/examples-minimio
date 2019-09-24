@@ -205,6 +205,18 @@ mod ffi {
         v_nsec: u32,
     }
 
+    impl Timespec {
+        fn from_millis(milliseconds: i32) -> Self {
+            let seconds = milliseconds / 1000;
+            let nanoseconds = (milliseconds % 1000) * 1000 * 1000;
+
+            Timespec {
+                tv_sec: seconds,
+                v_nsec: nanoseconds,
+            }
+        }
+    }
+
     pub type Event = Kevent;
     impl Event {
         pub fn new_read_event(fd: RawFd, id: u64) -> Self {

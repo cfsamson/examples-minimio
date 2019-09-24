@@ -86,9 +86,20 @@ impl Poll {
         self.register_with_id(stream, interests, token)
     }
 
-    pub fn poll(&mut self, events: &mut Events) -> io::Result<usize> {
+    /// Polls the event loop. The thread yields to the OS while witing for either
+    /// an event to retur or a timeout to occur. A negative timeout will be treated
+    /// as a timeout of 0.
+    pub fn poll(&mut self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<usize> {
+        // A negative timout is converted to a 0 timeout
+        let timeout = timeout_ms.map(|n| {
+            if n < 0 {
+                0
+            } else {
+                n
+            }
+        });
         loop {
-            let res = self.registry.selector.select(events);
+            let res = self.registry.selector.select(events,  timeout);
             match res {
                 Ok(()) => break,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),

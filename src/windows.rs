@@ -169,10 +169,13 @@ impl Selector {
     pub fn select(
         &mut self,
         events: &mut Vec<ffi::OVERLAPPED_ENTRY>,
-        //awakener: Sender<usize>,
+        timeout: Option<i32>,
     ) -> io::Result<()> {
         // calling GetQueueCompletionStatus will either return a handle to a "port" ready to read or
         // block if the queue is empty.
+
+        // Windows want timeout as u32 so we cast it as such
+        let timeout = timeout.map(|t| t as u32);
 
         // first let's clear events for any previous events and wait until we get som more
         events.clear();
@@ -182,7 +185,7 @@ impl Selector {
             self.completion_port as isize,
             events,
             ul_count,
-            None,
+            timeout,
             false,
         )?;
 
@@ -627,7 +630,7 @@ mod tests {
             .expect("Error registering sock read event");
         let mut entry = ffi::OVERLAPPED_ENTRY::zeroed();
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![entry; 255];
-        selector.select(&mut events).expect("Select failed");
+        selector.select(&mut events, None).expect("Select failed");
 
         for event in events {
             let ol = unsafe { &*(event.lp_overlapped) };

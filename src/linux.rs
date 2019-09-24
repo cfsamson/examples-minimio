@@ -83,10 +83,12 @@ impl Selector {
         self.id
     }
 
-    /// This function blocks and waits until an event has been recieved. It never times out.
-    pub fn select(&self, events: &mut Events) -> io::Result<()> {
+    /// This function blocks and waits until an event has been recieved. `timeout` None means
+    /// the poll will never time out. 
+    pub fn select(&self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<()> {
         events.clear();
-        epoll_wait(self.fd, events, 1024, -1).map(|n_events| {
+        let timeout = timeout_ms.unwrap_or(-1);
+        epoll_wait(self.fd, events, 1024, timeout).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.

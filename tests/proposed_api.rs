@@ -24,7 +24,7 @@ fn proposed_api() {
             println!("POLLING");
             let mut will_close = false;
             println!("{:?}", poll);
-            match poll.poll(&mut events) {
+            match poll.poll(&mut events, None) {
                 Ok(..) => (),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
                     println!("INTERRUPTED: {}", e);
