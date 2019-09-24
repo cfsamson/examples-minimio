@@ -547,7 +547,13 @@ mod ffi {
         };
 
         if res == 0 {
-            Err(std::io::Error::last_os_error())
+            if let Some(e) = io::Error::last_os_error().raw_os_error() {
+                // Code 258 is timeout error
+                if e == 258 {
+                    return Err(io::Error::from(io::ErrorKind::Interrupted));
+                }
+            }
+            Err(io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
         }
