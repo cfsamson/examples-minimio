@@ -4,7 +4,6 @@ use std::sync::mpsc::channel;
 use std::thread;
 
 #[test]
-
 fn proposed_api() {
     // First lets set up a "runtime"
     let mut poll = Poll::new().unwrap();
@@ -24,13 +23,13 @@ fn proposed_api() {
             println!("POLLING");
             let mut will_close = false;
             println!("{:?}", poll);
-            match poll.poll(&mut events, Some(50)) {
+            match poll.poll(&mut events, Some(200)) {
                 Ok(..) => (),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
                     println!("INTERRUPTED: {}", e);
                     break;
                 }
-                Err(e) => panic!("Poll error: {:?}, {}",e.kind(), e),
+                Err(e) => panic!("Poll error: {:?}, {}", e.kind(), e),
             };
             for event in &events {
                 let event_token = event.id().value();

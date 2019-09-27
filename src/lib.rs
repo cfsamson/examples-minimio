@@ -3,7 +3,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
-use std::fmt;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -92,13 +91,7 @@ impl Poll {
     /// as a timeout of 0.
     pub fn poll(&mut self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<usize> {
         // A negative timout is converted to a 0 timeout
-        let timeout = timeout_ms.map(|n| {
-            if n < 0 {
-                0
-            } else {
-                n
-            }
-        });
+        let timeout = timeout_ms.map(|n| if n < 0 { 0 } else { n });
         loop {
             let res = self.registry.selector.select(events, timeout);
             match res {
@@ -134,4 +127,3 @@ impl Interests {
         self.0 & WRITABLE != 0
     }
 }
-

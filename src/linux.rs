@@ -84,7 +84,7 @@ impl Selector {
     }
 
     /// This function blocks and waits until an event has been recieved. `timeout` None means
-    /// the poll will never time out. 
+    /// the poll will never time out.
     pub fn select(&self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<()> {
         events.clear();
         let timeout = timeout_ms.unwrap_or(-1);
@@ -270,7 +270,6 @@ mod ffi {
         /// http://man7.org/linux/man-pages/man2/timerfd_create.2.html
         pub fn eventfd(initva: u32, flags: i32) -> i32;
     }
-
 }
 
 fn epoll_create() -> io::Result<i32> {

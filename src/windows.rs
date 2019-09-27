@@ -634,7 +634,7 @@ mod tests {
                        \r\n";
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
-            
+
         registrator
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");

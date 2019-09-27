@@ -33,9 +33,9 @@ impl Registrator {
         if interests.is_readable() {
             // We register the id (or most oftenly referred to as a Token) to the `udata` field
             // if the `Kevent`
-            let kevent = ffi::Event::new_read_event(fd, token as u64);
-            let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
+            let event = ffi::Event::new_read_event(fd, token as u64);
+            let event = [event];
+            kevent(self.kq, &event, &mut [], 0, None)?;
         };
 
         if interests.is_writable() {
@@ -57,9 +57,9 @@ impl Registrator {
                 "Poll instance closed.",
             ));
         }
-        let kevent = ffi::Event::new_wakeup_event();
-        let kevent = [kevent];
-        ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
+        let event = ffi::Event::new_wakeup_event();
+        let event = [event];
+        kevent(self.kq, &event, &mut [], 0, None)?;
 
         Ok(())
     }
@@ -75,7 +75,7 @@ impl Selector {
     fn new_with_id(id: usize) -> io::Result<Self> {
         Ok(Selector {
             id,
-            kq: ffi::queue()?,
+            kq: kqueue()?,
         })
     }
 
@@ -92,7 +92,7 @@ impl Selector {
         // TODO: get n_events from self
         let n_events = events.capacity() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events, timeout_ms).map(|n_events| {
+        kevent(self.kq, &[], events, n_events, timeout_ms).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -110,7 +110,7 @@ impl Selector {
 
 impl Drop for Selector {
     fn drop(&mut self) {
-        match ffi::close_fd(self.kq) {
+        match close(self.kq) {
             Ok(..) => (),
             Err(e) => {
                 if !std::thread::panicking() {
@@ -200,19 +200,18 @@ mod ffi {
     #[repr(C)]
     pub(super) struct Timespec {
         /// Seconds
-        tv_sec: u32,
+        tv_sec: isize,
         /// Nanoseconds     
-        v_nsec: u32,
+        v_nsec: usize,
     }
 
     impl Timespec {
-        fn from_millis(milliseconds: i32) -> Self {
+        pub fn from_millis(milliseconds: i32) -> Self {
             let seconds = milliseconds / 1000;
             let nanoseconds = (milliseconds % 1000) * 1000 * 1000;
-
             Timespec {
-                tv_sec: seconds as u32,
-                v_nsec: nanoseconds as u32,
+                tv_sec: seconds as isize,
+                v_nsec: nanoseconds as usize,
             }
         }
     }
@@ -254,57 +253,6 @@ mod ffi {
         }
     }
 
-    pub fn queue() -> io::Result<i32> {
-        let fd = unsafe { ffi::kqueue() };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(fd)
-    }
-
-    pub fn syscall_kevent(
-        kq: RawFd,
-        cl: &[Kevent],
-        el: &mut [Kevent],
-        n_events: i32,
-        timeout_ms: Option<i32>,
-    ) -> io::Result<usize> {
-        let res = unsafe {
-            let kq = kq as i32;
-            let cl_len = cl.len() as i32;
-
-            let timeout = timeout_ms.map(|t| Timespec::from_millis(t));
-
-            let timeout: *const Timespec = match &timeout {
-                Some(n) => n,
-                None => ptr::null(),
-            };
-
-            kevent(
-                kq,
-                cl.as_ptr(),
-                cl_len,
-                el.as_mut_ptr(),
-                n_events,
-                timeout,
-            )
-        };
-        if res < 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(res as usize)
-    }
-
-    pub fn close_fd(fd: RawFd) -> io::Result<()> {
-        let res = unsafe { ffi::close(fd) };
-        if res < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
     // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L497
     // https://github.com/rust-lang/libc/blob/c8aa8ec72d631bc35099bcf5d634cf0a0b841be0/src/unix/bsd/apple/mod.rs#L207
     #[derive(Debug, Clone, Default)]
@@ -331,6 +279,7 @@ mod ffi {
         /// Returns: positive: file descriptor, negative: error
         pub(super) fn kqueue() -> i32;
         /// Returns: nothing, all non zero return values is an error
+        /// If the time limit expires, then kevent() returns 0
         pub(super) fn kevent(
             kq: i32,
             changelist: *const Kevent,
@@ -341,6 +290,50 @@ mod ffi {
         ) -> i32;
 
         pub fn close(d: i32) -> i32;
+    }
+}
+
+pub fn kqueue() -> io::Result<i32> {
+    let fd = unsafe { ffi::kqueue() };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(fd)
+}
+
+pub fn kevent(
+    kq: RawFd,
+    cl: &[ffi::Kevent],
+    el: &mut [ffi::Kevent],
+    n_events: i32,
+    timeout_ms: Option<i32>,
+) -> io::Result<usize> {
+    let res = unsafe {
+        let kq = kq as i32;
+        let cl_len = cl.len() as i32;
+
+        let timeout = timeout_ms.map(ffi::Timespec::from_millis);
+
+        let timeout: *const ffi::Timespec = match &timeout {
+            Some(n) => n,
+            None => ptr::null(),
+        };
+
+        ffi::kevent(kq, cl.as_ptr(), cl_len, el.as_mut_ptr(), n_events, timeout)
+    };
+    if res < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    Ok(res as usize)
+}
+
+pub fn close(fd: RawFd) -> io::Result<()> {
+    let res = unsafe { ffi::close(fd) };
+    if res < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
     }
 }
 
@@ -379,7 +372,9 @@ mod tests {
 
         let mut events = vec![Event::zero()];
 
-        selector.select(&mut events, None).expect("waiting for event.");
+        selector
+            .select(&mut events, None)
+            .expect("waiting for event.");
 
         assert_eq!(events[0].udata, 99);
     }
@@ -404,7 +399,9 @@ mod tests {
 
         let mut events = vec![Event::zero()];
 
-        selector.select(&mut events, None).expect("waiting for event.");
+        selector
+            .select(&mut events, None)
+            .expect("waiting for event.");
 
         let mut buff = String::new();
         assert!(buff.is_empty());
