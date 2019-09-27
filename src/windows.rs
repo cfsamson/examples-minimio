@@ -181,13 +181,23 @@ impl Selector {
         events.clear();
         let ul_count = events.capacity() as u32;
 
-        let removed = ffi::get_queued_completion_status_ex(
+        let removed_res = ffi::get_queued_completion_status_ex(
             self.completion_port as isize,
             events,
             ul_count,
             timeout,
             false,
-        )?;
+        );
+
+        // We need to handle the case that the "error" was a WAIT_TIMEOUT error.
+        // the code for this error is 258 on Windows. We don't treat this as an error
+        // but set the events returned to 0.
+        // (i tried to do this in the `ffi` function but there was an error)
+        let removed = match removed_res {
+            Ok(n) => n,
+            Err(e) if e.raw_os_error() == Some(258) => 0,
+            Err(e) => return Err(e),
+        };
 
         unsafe {
             events.set_len(removed as usize);
@@ -547,7 +557,7 @@ mod ffi {
         };
 
         if res == 0 {
-            Err(std::io::Error::last_os_error())
+            Err(io::Error::last_os_error())
         } else {
             Ok(ul_num_entries_removed)
         }
@@ -624,7 +634,7 @@ mod tests {
                        \r\n";
         sock.write_all(request.as_bytes())
             .expect("Error writing to stream");
-
+            
         registrator
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");

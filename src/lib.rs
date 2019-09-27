@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
+use std::fmt;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -99,7 +100,7 @@ impl Poll {
             }
         });
         loop {
-            let res = self.registry.selector.select(events,  timeout);
+            let res = self.registry.selector.select(events, timeout);
             match res {
                 Ok(()) => break,
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => (),
@@ -133,3 +134,4 @@ impl Interests {
         self.0 & WRITABLE != 0
     }
 }
+

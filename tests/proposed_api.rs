@@ -24,13 +24,13 @@ fn proposed_api() {
             println!("POLLING");
             let mut will_close = false;
             println!("{:?}", poll);
-            match poll.poll(&mut events, None) {
+            match poll.poll(&mut events, Some(50)) {
                 Ok(..) => (),
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
                     println!("INTERRUPTED: {}", e);
                     break;
                 }
-                Err(e) => panic!(e),
+                Err(e) => panic!("Poll error: {:?}, {}",e.kind(), e),
             };
             for event in &events {
                 let event_token = event.id().value();
