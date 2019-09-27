@@ -35,7 +35,7 @@ impl Registrator {
             // if the `Kevent`
             let kevent = ffi::Event::new_read_event(fd, token as u64);
             let kevent = [kevent];
-            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+            ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
         };
 
         if interests.is_writable() {
@@ -59,7 +59,7 @@ impl Registrator {
         }
         let kevent = ffi::Event::new_wakeup_event();
         let kevent = [kevent];
-        ffi::syscall_kevent(self.kq, &kevent, &mut [], 0)?;
+        ffi::syscall_kevent(self.kq, &kevent, &mut [], 0, None)?;
 
         Ok(())
     }
@@ -88,11 +88,11 @@ impl Selector {
     }
 
     /// This function blocks and waits until an event has been recieved. It never times out.
-    pub fn select(&self, events: &mut Events) -> io::Result<()> {
+    pub fn select(&self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<()> {
         // TODO: get n_events from self
         let n_events = events.capacity() as i32;
         events.clear();
-        ffi::syscall_kevent(self.kq, &[], events, n_events).map(|n_events| {
+        ffi::syscall_kevent(self.kq, &[], events, n_events, timeout_ms).map(|n_events| {
             // This is safe because `syscall_kevent` ensures that `n_events` are
             // assigned. We could check for a valid token for each event to verify so this is
             // just a performance optimization used in `mio` and copied here.
@@ -211,8 +211,8 @@ mod ffi {
             let nanoseconds = (milliseconds % 1000) * 1000 * 1000;
 
             Timespec {
-                tv_sec: seconds,
-                v_nsec: nanoseconds,
+                tv_sec: seconds as u32,
+                v_nsec: nanoseconds as u32,
             }
         }
     }
@@ -267,17 +267,26 @@ mod ffi {
         cl: &[Kevent],
         el: &mut [Kevent],
         n_events: i32,
+        timeout_ms: Option<i32>,
     ) -> io::Result<usize> {
         let res = unsafe {
             let kq = kq as i32;
             let cl_len = cl.len() as i32;
+
+            let timeout = timeout_ms.map(|t| Timespec::from_millis(t));
+
+            let timeout: *const Timespec = match &timeout {
+                Some(n) => n,
+                None => ptr::null(),
+            };
+
             kevent(
                 kq,
                 cl.as_ptr(),
                 cl_len,
                 el.as_mut_ptr(),
                 n_events,
-                ptr::null(),
+                timeout,
             )
         };
         if res < 0 {
@@ -370,7 +379,7 @@ mod tests {
 
         let mut events = vec![Event::zero()];
 
-        selector.select(&mut events).expect("waiting for event.");
+        selector.select(&mut events, None).expect("waiting for event.");
 
         assert_eq!(events[0].udata, 99);
     }
@@ -395,7 +404,7 @@ mod tests {
 
         let mut events = vec![Event::zero()];
 
-        selector.select(&mut events).expect("waiting for event.");
+        selector.select(&mut events, None).expect("waiting for event.");
 
         let mut buff = String::new();
         assert!(buff.is_empty());
