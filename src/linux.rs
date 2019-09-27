@@ -301,6 +301,8 @@ fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: &mut Event) -> io::Result<()> {
 }
 
 /// Waits for events on the epoll instance to occur. Returns the number file descriptors ready for the requested I/O.
+/// When successful, epoll_wait() returns the number of file descriptors ready for the requested
+/// I/O, or zero if no file descriptor became ready during the requested timeout milliseconds
 fn epoll_wait(epfd: i32, events: &mut [Event], maxevents: i32, timeout: i32) -> io::Result<i32> {
     let res = unsafe { ffi::epoll_wait(epfd, events.as_mut_ptr(), maxevents, timeout) };
     if res < 0 {

@@ -400,7 +400,10 @@ mod ffi {
             dwCompletionKey: ULONG_PTR,
             lpOverlapped: LPWSAOVERLAPPED,
         ) -> i32;
-        // https://docs.microsoft.com/nb-no/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatus
+        /// https://docs.microsoft.com/nb-no/windows/win32/api/ioapiset/nf-ioapiset-getqueuedcompletionstatus
+        /// Errors: https://docs.microsoft.com/nb-no/windows/win32/debug/system-error-codes--0-499-
+        /// From this we can see that error `WAIT_TIMEOUT` has the code 258 which we'll
+        /// need later on
         fn GetQueuedCompletionStatusEx(
             CompletionPort: HANDLE,
             lpCompletionPortEntries: *mut OVERLAPPED_ENTRY,
