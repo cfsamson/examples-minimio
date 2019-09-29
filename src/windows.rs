@@ -23,12 +23,14 @@ pub struct TcpStream {
 }
 
 // On Windows we need to be careful when using IOCP on a server. Since we're "lending"
-// access to the OS over memory we crate (but can't touch while it's waiting)
+// access to the OS over memory we crate (we're not giving over ownership, 
+// but can't touch while it's lent either),
 // it's easy to exploit this by issuing a lot of requests while delaying our
-// responses. By doing this we would force the server to hand over so many buffers
-// that it might run out of memory. Now the way we would normally handle this is
-// to have a counter and limit the number of outstandig buffers, queueing requests
-// and only handle them when the counter is below the high water mark.
+// responses. By doing this we would force the server to hand over so many write
+// read buffers while waiting for clients to respond that it might run out of memory. 
+// Now the way we would normally handle this is to have a counter and limit the
+// number of outstandig buffers, queueing requests and only handle them when the
+// counter is below the high water mark. The same goes for using unlimited timeouts.
 // http://www.serverframework.com/asynchronousevents/2011/06/tcp-flow-control-and-asynchronous-writes.html
 
 impl TcpStream {
@@ -217,6 +219,7 @@ impl Selector {
 impl Drop for Selector {
     fn drop(&mut self) {
         match ffi::close_handle(self.completion_port) {
+            Ok(_) => (),
             Err(e) => {
                 if !std::thread::panicking() {
                     panic!(e);
