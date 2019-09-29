@@ -110,6 +110,7 @@ impl Poll {
 
         println!("POLL IS DEAD!");
         if self.is_poll_dead.load(Ordering::SeqCst) {
+            println!("POLL IS DEAD ERROR IS RETURNED!");
             return Err(io::Error::new(io::ErrorKind::Interrupted, "Poll closed."));
         }
 
