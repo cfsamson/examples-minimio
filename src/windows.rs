@@ -213,9 +213,10 @@ impl Selector {
 impl Drop for Selector {
     fn drop(&mut self) {
         match ffi::close_handle(self.completion_port) {
-            Ok(..) => (),
+            Ok(..) => println!("HANDLE CLOSED"),
             Err(e) => {
                 if !std::thread::panicking() {
+                    println!("ERROR WHILE DROP {}", e);
                     panic!(e);
                 }
             }
