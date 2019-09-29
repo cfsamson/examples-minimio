@@ -113,7 +113,10 @@ impl Registrator {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "Poll instance is dead.",
-            ));
+            )); 
+             
+              
+               
         }
 
         ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
@@ -195,7 +198,7 @@ impl Selector {
         // (i tried to do this in the `ffi` function but there was an error)
         let removed = match removed_res {
             Ok(n) => n,
-            Err(e) if e.raw_os_error() == Some(258) => 0,
+            Err(ref e) if e.raw_os_error() == Some(258) => 0,
             Err(e) => return Err(e),
         };
 
