@@ -22,10 +22,14 @@ pub struct TcpStream {
     // status: TcpReadiness,
 }
 
-// enum TcpReadiness {
-//     Ready,
-//     NotReady,
-// }
+// On Windows we need to be careful when using IOCP on a server. Since we're "lending"
+// access to the OS over memory we crate (but can't touch while it's waiting)
+// it's easy to exploit this by issuing a lot of requests while delaying our
+// responses. By doing this we would force the server to hand over so many buffers
+// that it might run out of memory. Now the way we would normally handle this is
+// to have a counter and limit the number of outstandig buffers, queueing requests
+// and only handle them when the counter is below the high water mark.
+// http://www.serverframework.com/asynchronousevents/2011/06/tcp-flow-control-and-asynchronous-writes.html
 
 impl TcpStream {
     pub fn connect(adr: impl net::ToSocketAddrs) -> io::Result<Self> {
@@ -213,10 +217,8 @@ impl Selector {
 impl Drop for Selector {
     fn drop(&mut self) {
         match ffi::close_handle(self.completion_port) {
-            Ok(..) => println!("HANDLE CLOSED"),
             Err(e) => {
                 if !std::thread::panicking() {
-                    println!("ERROR WHILE DROP {}", e);
                     panic!(e);
                 }
             }
