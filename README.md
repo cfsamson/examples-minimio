@@ -24,5 +24,7 @@ while let Ok((event_id, data)) = event_loop.wait() {
 This library is MIT licensed.
 
 ## Contribute
-As of this moment, the library is not working or ready yet, but once the main infrastructure is set up and a working example is made I will accept all contributions to make this support the most basic IO operations.
+The main infrastructure is set up and I have a working example used in the book [The Node Experiment - Exploring Async Basics with Rust](https://github.com/cfsamson/book-exploring-async-basics). The next step for me is to write a short gibook explaining the code in this repository and until thats done I can't really accept any contributions.
+
+Once the book is published I'll accept contributions to make this a safer or better example.
 
