@@ -14,14 +14,14 @@ fn proposed_api() {
     let mut rt = Runtime { events: vec![] };
 
     // This is the token we will provide
-    let provided_token = 10;
+    let test_token = 10;
 
     // Set up the epoll/IOCP event loop
     let handle = thread::spawn(move || {
         let mut events = Events::with_capacity(1024);
         loop {
             println!("POLLING");
-            let mut will_close = false;
+            let will_close = false;
             println!("{:?}", poll);
             match poll.poll(&mut events, Some(200)) {
                 Ok(..) => (),
@@ -60,12 +60,12 @@ fn proposed_api() {
 
     // PROBLEM 2: We need to use registry here
     registrator
-        .register(&mut stream, provided_token, Interests::readable())
+        .register(&mut stream, test_token, Interests::readable())
         .expect("registration err.");
     println!("HERE");
 
     // When we get notified that 10 is ready we can run this code
-    rt.spawn(provided_token, move || {
+    rt.spawn(test_token, move || {
         let mut buffer = String::new();
         stream.read_to_string(&mut buffer).unwrap();
         assert!(!buffer.is_empty(), "Got an empty buffer");
@@ -76,7 +76,7 @@ fn proposed_api() {
     // But we'll only check if we have gotten anything, not block
     println!("WAITING FOR EVENTS");
     while let Ok(recieved_token) = evt_reciever.recv() {
-        assert_eq!(provided_token, recieved_token, "Non matching tokens.");
+        assert_eq!(test_token, recieved_token, "Non matching tokens.");
         println!("RECIEVED EVENT: {:?}", recieved_token);
         // Running the code for event
         rt.run(recieved_token); // runs the code associated with event 10 in this case
@@ -106,42 +106,3 @@ impl Runtime {
         f();
     }
 }
-
-// The plan:
-//
-// Poll {
-//     selector: Arc<Selector>,
-// }
-//
-// fn selector() -> Arc<Selector> // this can be used even though poll is moved
-//
-// which means we can do:
-// selector.register(...)
-//
-// Now register() can't mutate our TcpStream, it can however get the Socket Handle from it
-//
-// When we register a "socket"
-// -> we create a buffer in Selecor together with the Token
-//    (this buffer gets filled on completion)
-//
-// When poll returns we know that event X has occurred and the buffer that is stored in Selector is filled
-//  -> But how do we get this data to our TcpStream??
-//
-// We have event X with the Token and the data
-//
-// We know a callback with Socket X is waiting to be ran when Event X happens
-//
-// But we have no communication between Socket X and Selector...
-//
-// Now...
-//
-// poll.register()
-// could instead return both a Poll instance and a ReadinessQueue
-//
-// Register works as suggested above but select retains a Arc<Mutex<Vec<u8>>> to the streams buffer.
-// ONCE the event is completed and the primary buffer is filled, we fill the Arc<Mutex<>> from TcpStream on windows
-//  -> On Unix we do nothing
-//
-// the poll instance could be moved
-// and we retain the channel and we could call readiness.get_events() -> and retrieve any events
-// and we can use regisrator.register() as before

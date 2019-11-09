@@ -1,8 +1,8 @@
 #![allow(non_camel_case_types)]
+#![allow(dead_code)]
 
 use crate::{Interests, Token};
 use std::io::{self, Read, Write};
-use std::mem;
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -609,7 +609,7 @@ mod tests {
 
     #[test]
     fn selector_register() {
-        let mut selector = Selector::new().expect("create completion port failed");
+        let selector = Selector::new().expect("create completion port failed");
         let poll_is_alive = Arc::new(AtomicBool::new(false));
         let registrator = selector.registrator(poll_is_alive.clone());
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
@@ -641,7 +641,7 @@ mod tests {
         registrator
             .register(&mut sock, 2, Interests::readable())
             .expect("Error registering sock read event");
-        let mut entry = ffi::OVERLAPPED_ENTRY::zeroed();
+        let entry = ffi::OVERLAPPED_ENTRY::zeroed();
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![entry; 255];
         selector.select(&mut events, None).expect("Select failed");
 
