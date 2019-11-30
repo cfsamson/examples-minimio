@@ -1,108 +1,100 @@
-use minimio::{Events, Interests, Poll, TcpStream};
-use std::io::{self, Read, Write};
-use std::sync::mpsc::channel;
-use std::thread;
+use minimio::{Events, Interests, Poll, Registrator, TcpStream};
+use std::{io, io::Read, io::Write, thread};
+use std::sync::mpsc::{channel, Receiver, Sender};
+
+const TEST_TOKEN: usize = 10; // Hard coded for this test only
 
 #[test]
 fn proposed_api() {
-    // First lets set up a "runtime"
-    let mut poll = Poll::new().unwrap();
-    let registrator = poll.registrator();
-
     let (evt_sender, evt_reciever) = channel();
+    let reactor = Reactor::new(evt_sender);
+    let mut executor = Excutor::new(evt_reciever);
 
-    let mut rt = Runtime { events: vec![] };
-
-    // This is the token we will provide
-    let test_token = 10;
-
-    // Set up the epoll/IOCP event loop
-    let handle = thread::spawn(move || {
-        let mut events = Events::with_capacity(1024);
-        loop {
-            println!("POLLING");
-            let will_close = false;
-            println!("{:?}", poll);
-            match poll.poll(&mut events, Some(200)) {
-                Ok(..) => (),
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                    println!("INTERRUPTED: {}", e);
-                    break;
-                }
-                Err(e) => panic!("Poll error: {:?}, {}", e.kind(), e),
-            };
-            for event in &events {
-                let event_token = event.id().value();
-                println!("GOT EVENT: {:?}", event_token);
-
-                evt_sender.send(event_token).expect("send event_token err.");
-            }
-
-            if will_close {
-                break;
-            }
-        }
-    });
-
-    // ===== THIS IS "APPLICATION" CODE USING OUR INFRASTRUCTURE =====
     let mut stream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
-    let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
-                   Host: slowwly.robertomurray.co.uk\r\n\
-                   Connection: close\r\n\
-                   \r\n";
-    stream
-        .write_all(request.as_bytes())
-        .expect("Error writing to stream");
+    let request = b"GET /delay/1000/url/http://www.google.com HTTP/1.1\r\nHost: slowwly.robertomurray.co.uk\r\nConnection: close\r\n\r\n";
 
-    // Mio does this
-    // NOTE: On windows, the TcpStream struct can contain an Arc<Mutex<Vec<u8>>> where it leaves
-    // a reference to the buffer with our selector that which can fill it when data is ready
+    stream.write_all(request).expect("Stream write err.");
+    reactor.register_stream_read_interest(&mut stream, TEST_TOKEN);
 
-    // PROBLEM 2: We need to use registry here
-    registrator
-        .register(&mut stream, test_token, Interests::readable())
-        .expect("registration err.");
-    println!("HERE");
-
-    // When we get notified that 10 is ready we can run this code
-    rt.spawn(test_token, move || {
+    executor.suspend(TEST_TOKEN, move || {
         let mut buffer = String::new();
         stream.read_to_string(&mut buffer).unwrap();
         assert!(!buffer.is_empty(), "Got an empty buffer");
-        println!("PROPOSED API:\n{}", buffer);
+        reactor.stop_loop();
     });
 
-    // ===== THIS WILL BE IN OUR MAIN EVENT LOOP ======
-    // But we'll only check if we have gotten anything, not block
-    println!("WAITING FOR EVENTS");
-    while let Ok(recieved_token) = evt_reciever.recv() {
-        assert_eq!(test_token, recieved_token, "Non matching tokens.");
-        println!("RECIEVED EVENT: {:?}", recieved_token);
-        // Running the code for event
-        rt.run(recieved_token); // runs the code associated with event 10 in this case
-                                // let's close the event loop since we know we only have 1 event
-        registrator.close_loop().expect("close loop err.");
-    }
-    handle.join().expect("error joining thread");
+    executor.block_on_all();
+    // NB! Best practice is to make sure to join our child thread. We skip it here for brevity.
     println!("EXITING");
 }
 
-struct Runtime {
-    events: Vec<(usize, Box<dyn FnMut()>)>,
+struct Reactor {
+    handle: std::thread::JoinHandle<()>,
+    registrator: Registrator,
 }
 
-impl Runtime {
-    fn spawn(&mut self, id: usize, f: impl FnMut() + 'static) {
-        self.events.push((id, Box::new(f)));
+impl Reactor {
+    fn new(evt_sender: Sender<usize>) -> Reactor {
+        let mut poll = Poll::new().unwrap();
+        let registrator = poll.registrator();
+
+        // Set up the epoll/IOCP event loop in a seperate thread
+        let handle = thread::spawn(move || {
+            let mut events = Events::with_capacity(1024);
+            loop {
+                println!("Waiting! {:?}", poll);
+                match poll.poll(&mut events, Some(200)) {
+                    Ok(..) => (),
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                        println!("INTERRUPTED: {}", e);
+                        break;
+                    }
+                    Err(e) => panic!("Poll error: {:?}, {}", e.kind(), e),
+                };
+                for event in &events {
+                    let event_token = event.id().value();
+                    evt_sender.send(event_token).expect("send event_token err.");
+                }
+            }
+        });
+
+        Reactor { handle, registrator }
     }
 
-    fn run(&mut self, event: usize) {
-        println!("RUNNING EVENT: {}", event);
-        let (_, f) = self
-            .events
+    fn register_stream_read_interest(&self, stream: &mut TcpStream, token: usize) {
+        self.registrator.register(stream, token, Interests::readable()).expect("registration err.");
+    }
+
+    fn stop_loop(&self) {
+        self.registrator.close_loop().expect("close loop err.");
+    }
+}
+
+struct Excutor {
+    events: Vec<(usize, Box<dyn FnMut()>)>,
+    evt_reciever: Receiver<usize>,
+}
+
+impl Excutor {
+    fn new(evt_reciever: Receiver<usize>) -> Self {
+        Excutor { events: vec![], evt_reciever }
+    }
+    fn suspend(&mut self, id: usize, f: impl FnMut() + 'static) {
+        self.events.push((id, Box::new(f)));
+    }
+    fn resume(&mut self, event: usize) {
+        println!("RESUMING EVENT: {}", event);
+        let (_, f) = self.events
             .iter_mut()
             .find(|(e, _)| *e == event)
             .expect("Couldn't find event.");
         f();
+    }
+    fn block_on_all(&mut self) {
+        while let Ok(recieved_token) = self.evt_reciever.recv() {
+            assert_eq!(TEST_TOKEN, recieved_token, "Non matching tokens.");
+            println!("EVENT: {} is ready", recieved_token);
+            self.resume(recieved_token);
+        }
     }
 }

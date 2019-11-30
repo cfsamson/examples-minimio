@@ -73,10 +73,7 @@ pub struct Selector {
 
 impl Selector {
     fn new_with_id(id: usize) -> io::Result<Self> {
-        Ok(Selector {
-            id,
-            kq: kqueue()?,
-        })
+        Ok(Selector { id, kq: kqueue()? })
     }
 
     pub fn new() -> io::Result<Self> {
