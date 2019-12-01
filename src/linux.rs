@@ -68,7 +68,6 @@ pub struct Selector {
 
 impl Selector {
     fn new_with_id(id: usize) -> io::Result<Self> {
-        println!("EPOLL CREATE");
         Ok(Selector {
             id,
             fd: epoll_create()?,

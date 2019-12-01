@@ -22,10 +22,16 @@ pub struct TcpStream {
     // status: TcpReadiness,
 }
 
-// enum TcpReadiness {
-//     Ready,
-//     NotReady,
-// }
+// On Windows we need to be careful when using IOCP on a server. Since we're "lending"
+// access to the OS over memory we crate (we're not giving over ownership, 
+// but can't touch while it's lent either),
+// it's easy to exploit this by issuing a lot of requests while delaying our
+// responses. By doing this we would force the server to hand over so many write
+// read buffers while waiting for clients to respond that it might run out of memory. 
+// Now the way we would normally handle this is to have a counter and limit the
+// number of outstandig buffers, queueing requests and only handle them when the
+// counter is below the high water mark. The same goes for using unlimited timeouts.
+// http://www.serverframework.com/asynchronousevents/2011/06/tcp-flow-control-and-asynchronous-writes.html
 
 impl TcpStream {
     pub fn connect(adr: impl net::ToSocketAddrs) -> io::Result<Self> {
@@ -113,7 +119,10 @@ impl Registrator {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "Poll instance is dead.",
-            ));
+            )); 
+             
+              
+               
         }
 
         ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
@@ -195,7 +204,7 @@ impl Selector {
         // (i tried to do this in the `ffi` function but there was an error)
         let removed = match removed_res {
             Ok(n) => n,
-            Err(e) if e.raw_os_error() == Some(258) => 0,
+            Err(ref e) if e.raw_os_error() == Some(258) => 0,
             Err(e) => return Err(e),
         };
 
@@ -210,7 +219,7 @@ impl Selector {
 impl Drop for Selector {
     fn drop(&mut self) {
         match ffi::close_handle(self.completion_port) {
-            Ok(..) => (),
+            Ok(_) => (),
             Err(e) => {
                 if !std::thread::panicking() {
                     panic!(e);
