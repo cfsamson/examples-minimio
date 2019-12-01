@@ -1,5 +1,5 @@
 use minimio::{Events, Interests, Poll, Registrator, TcpStream};
-use std::{io, io::Read, io::Write, thread};
+use std::{io, io::Read, io::Write, thread, thread::JoinHandle};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 const TEST_TOKEN: usize = 10; // Hard coded for this test only
@@ -7,7 +7,7 @@ const TEST_TOKEN: usize = 10; // Hard coded for this test only
 #[test]
 fn proposed_api() {
     let (evt_sender, evt_reciever) = channel();
-    let reactor = Reactor::new(evt_sender);
+    let mut reactor = Reactor::new(evt_sender);
     let mut executor = Excutor::new(evt_reciever);
 
     let mut stream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
@@ -16,21 +16,21 @@ fn proposed_api() {
     stream.write_all(request).expect("Stream write err.");
     reactor.register_stream_read_interest(&mut stream, TEST_TOKEN);
 
+    let registrator = reactor.take_registrator();
     executor.suspend(TEST_TOKEN, move || {
         let mut buffer = String::new();
         stream.read_to_string(&mut buffer).unwrap();
         assert!(!buffer.is_empty(), "Got an empty buffer");
-        reactor.stop_loop();
+        registrator.close_loop().expect("close loop err.");
     });
 
     executor.block_on_all();
-    // NB! Best practice is to make sure to join our child thread. We skip it here for brevity.
     println!("EXITING");
 }
 
 struct Reactor {
-    handle: std::thread::JoinHandle<()>,
-    registrator: Registrator,
+    handle: Option<JoinHandle<()>>,
+    registrator: Option<Registrator>,
 }
 
 impl Reactor {
@@ -58,15 +58,24 @@ impl Reactor {
             }
         });
 
-        Reactor { handle, registrator }
+        Reactor { handle: Some(handle), registrator: Some(registrator) }
     }
 
     fn register_stream_read_interest(&self, stream: &mut TcpStream, token: usize) {
-        self.registrator.register(stream, token, Interests::readable()).expect("registration err.");
+        let registrator = self.registrator.as_ref().unwrap();
+        registrator.register(stream, token, Interests::readable()).expect("registration err.");
     }
 
-    fn stop_loop(&self) {
-        self.registrator.close_loop().expect("close loop err.");
+    fn take_registrator(&mut self) -> Registrator {
+        self.registrator.take().unwrap()
+    }
+}
+
+impl Drop for Reactor {
+    fn drop(&mut self) {
+        let handle = self.handle.take().unwrap();
+        handle.join().unwrap();
+        println!("Reactor thread exited successfully");
     }
 }
 
