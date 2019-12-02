@@ -43,6 +43,15 @@ impl std::cmp::PartialEq for Token {
     }
 }
 
+/// `Poll` represents the event queue. The `poll` method will block the current thread
+/// waiting for events. If no timeout is provided it will potentially block indefinately.
+/// 
+/// `Poll` can be used in one of two ways. The first way is by registering interest in events and then wait for
+/// them in the same thread. In this case you'll use the built-in methods on `Poll` for registering events.
+/// 
+/// Alternatively, it can be used by waiting in one thread and registering interest in events from
+/// another. In this case you'll ned to call the `Poll::registrator()` method which returns a `Registrator`
+/// tied to this event queue which can be sent to another thread and used to register events.
 #[derive(Debug)]
 pub struct Poll {
     registry: Registry,
@@ -116,14 +125,18 @@ impl Poll {
     }
 }
 
-pub const WRITABLE: u8 = 0b0000_0001;
-pub const READABLE: u8 = 0b0000_0010;
+const WRITABLE: u8 = 0b0000_0001;
+const READABLE: u8 = 0b0000_0010;
 
+/// Represents interest in either Read or Write events. This struct is created 
+/// by using one of the two constants:
+/// 
+/// - Interests::READABLE
+/// - Interests::WRITABLE
 pub struct Interests(u8);
 impl Interests {
-    pub fn readable() -> Self {
-        Interests(READABLE)
-    }
+    pub const READABLE: Interests = Interests(READABLE);
+    pub const WRITABLE: Interests = Interests(WRITABLE);
 }
 impl Interests {
     pub fn is_readable(&self) -> bool {

@@ -630,7 +630,7 @@ mod tests {
             .expect("Error writing to stream");
 
         registrator
-            .register(&mut sock, 1, Interests::readable())
+            .register(&mut sock, 1, Interests::READABLE)
             .expect("Error registering sock read event");
     }
 
@@ -648,7 +648,7 @@ mod tests {
             .expect("Error writing to stream");
 
         registrator
-            .register(&mut sock, 2, Interests::readable())
+            .register(&mut sock, 2, Interests::READABLE)
             .expect("Error registering sock read event");
         let entry = ffi::OVERLAPPED_ENTRY::zeroed();
         let mut events: Vec<ffi::OVERLAPPED_ENTRY> = vec![entry; 255];

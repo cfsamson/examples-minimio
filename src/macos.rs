@@ -346,7 +346,7 @@ mod tests {
         let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator
-            .register(&mut sock, 1, Interests::readable())
+            .register(&mut sock, 1, Interests::READABLE)
             .unwrap();
     }
 
@@ -364,7 +364,7 @@ mod tests {
         let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator
-            .register(&sock, 99, Interests::readable())
+            .register(&sock, 99, Interests::READABLE)
             .unwrap();
 
         let mut events = vec![Event::zero()];
@@ -391,7 +391,7 @@ mod tests {
         let registrator = selector.registrator(poll_is_dead.clone());
 
         registrator
-            .register(&sock, 100, Interests::readable())
+            .register(&sock, 100, Interests::READABLE)
             .unwrap();
 
         let mut events = vec![Event::zero()];

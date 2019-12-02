@@ -63,7 +63,7 @@ impl Reactor {
 
     fn register_stream_read_interest(&self, stream: &mut TcpStream, token: usize) {
         let registrator = self.registrator.as_ref().unwrap();
-        registrator.register(stream, token, Interests::readable()).expect("registration err.");
+        registrator.register(stream, token, Interests::READABLE).expect("registration err.");
     }
 
     fn take_registrator(&mut self) -> Registrator {

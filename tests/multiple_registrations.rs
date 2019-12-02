@@ -71,10 +71,10 @@ fn multiple_registraions() {
 
     // PROBLEM 2: We need to use registry here
     registrator
-        .register(&mut stream, provided_token, Interests::readable())
+        .register(&mut stream, provided_token, Interests::READABLE)
         .expect("registration err.");
     registrator
-        .register(&mut stream2, provided_token2, Interests::readable())
+        .register(&mut stream2, provided_token2, Interests::READABLE)
         .expect("registration err.");
     println!("HERE");
 
