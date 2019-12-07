@@ -112,8 +112,7 @@ pub struct Interests(u8);
 impl Interests {
     pub const READABLE: Interests = Interests(READABLE);
     pub const WRITABLE: Interests = Interests(WRITABLE);
-}
-impl Interests {
+
     pub fn is_readable(&self) -> bool {
         self.0 & READABLE != 0
     }
