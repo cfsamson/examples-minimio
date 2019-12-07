@@ -20,28 +20,7 @@ mod linux;
 pub use linux::{Event, Registrator, Selector, TcpStream};
 
 pub type Events = Vec<Event>;
-static TOKEN: Token = Token(AtomicUsize::new(0));
-
-pub struct Token(AtomicUsize);
-impl Token {
-    pub fn next(&self) -> usize {
-        self.0.fetch_add(1, Ordering::Relaxed)
-    }
-
-    pub fn value(&self) -> usize {
-        self.0.load(Ordering::Relaxed)
-    }
-
-    pub fn new(val: usize) -> Self {
-        Token(AtomicUsize::new(val))
-    }
-}
-
-impl std::cmp::PartialEq for Token {
-    fn eq(&self, other: &Self) -> bool {
-        self.value() == other.value()
-    }
-}
+pub type Token = usize;
 
 /// `Poll` represents the event queue. The `poll` method will block the current thread
 /// waiting for events. If no timeout is provided it will potentially block indefinately.

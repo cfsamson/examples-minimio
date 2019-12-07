@@ -1,4 +1,4 @@
-use crate::{Events, Interests, Token, TOKEN};
+use crate::{Events, Interests, Token};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -72,12 +72,8 @@ pub struct Selector {
 }
 
 impl Selector {
-    fn new_with_id(id: usize) -> io::Result<Self> {
-        Ok(Selector { id, kq: kqueue()? })
-    }
-
     pub fn new() -> io::Result<Self> {
-        Selector::new_with_id(TOKEN.next())
+        Ok(Selector { kq: kqueue()? })
     }
 
     pub fn id(&self) -> usize {
@@ -121,7 +117,7 @@ impl Drop for Selector {
 pub type Event = ffi::Kevent;
 impl Event {
     pub fn id(&self) -> Token {
-        Token::new(self.udata as usize)
+        self.udata as usize
     }
 }
 
@@ -267,7 +263,7 @@ mod ffi {
         pub fn token(&self) -> Option<Token> {
             // we have no realiable way of checking if this value is initialized or not but need
             // an option to be compatible with windows.
-            Some(Token::new(self.udata as usize))
+            Some(self.udata as usize)
         }
     }
 

@@ -33,7 +33,7 @@ fn multiple_registraions() {
                 Err(e) => panic!("Poll error: {:?}, {}", e.kind(), e),
             };
             for event in &events {
-                let event_token = event.id().value();
+                let event_token = event.id();
                 println!("GOT EVENT: {:?}", event_token);
 
                 evt_sender.send(event_token).expect("send event_token err.");

@@ -14,9 +14,10 @@ fn proposed_api() {
     let request = b"GET /delay/1000/url/http://www.google.com HTTP/1.1\r\nHost: slowwly.robertomurray.co.uk\r\nConnection: close\r\n\r\n";
 
     stream.write_all(request).expect("Stream write err.");
-    reactor.register_stream_read_interest(&mut stream, TEST_TOKEN);
 
-    let registrator = reactor.take_registrator();
+    let registrator = reactor.registrator();
+    registrator.register(&mut stream, TEST_TOKEN, Interests::READABLE).expect("registration err.");
+
     executor.suspend(TEST_TOKEN, move || {
         let mut buffer = String::new();
         stream.read_to_string(&mut buffer).unwrap();
@@ -25,7 +26,6 @@ fn proposed_api() {
     });
 
     executor.block_on_all();
-    println!("EXITING");
 }
 
 struct Reactor {
@@ -42,17 +42,13 @@ impl Reactor {
         let handle = thread::spawn(move || {
             let mut events = Events::with_capacity(1024);
             loop {
-                println!("Waiting! {:?}", poll);
                 match poll.poll(&mut events, Some(200)) {
                     Ok(..) => (),
-                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
-                        println!("INTERRUPTED: {}", e);
-                        break;
-                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => break,
                     Err(e) => panic!("Poll error: {:?}, {}", e.kind(), e),
                 };
                 for event in &events {
-                    let event_token = event.id().value();
+                    let event_token = event.id();
                     evt_sender.send(event_token).expect("send event_token err.");
                 }
             }
@@ -61,12 +57,7 @@ impl Reactor {
         Reactor { handle: Some(handle), registrator: Some(registrator) }
     }
 
-    fn register_stream_read_interest(&self, stream: &mut TcpStream, token: usize) {
-        let registrator = self.registrator.as_ref().unwrap();
-        registrator.register(stream, token, Interests::READABLE).expect("registration err.");
-    }
-
-    fn take_registrator(&mut self) -> Registrator {
+    fn registrator(&mut self) -> Registrator {
         self.registrator.take().unwrap()
     }
 }
@@ -75,7 +66,6 @@ impl Drop for Reactor {
     fn drop(&mut self) {
         let handle = self.handle.take().unwrap();
         handle.join().unwrap();
-        println!("Reactor thread exited successfully");
     }
 }
 
@@ -92,7 +82,6 @@ impl Excutor {
         self.events.push((id, Box::new(f)));
     }
     fn resume(&mut self, event: usize) {
-        println!("RESUMING EVENT: {}", event);
         let (_, f) = self.events
             .iter_mut()
             .find(|(e, _)| *e == event)
@@ -102,7 +91,6 @@ impl Excutor {
     fn block_on_all(&mut self) {
         while let Ok(recieved_token) = self.evt_reciever.recv() {
             assert_eq!(TEST_TOKEN, recieved_token, "Non matching tokens.");
-            println!("EVENT: {} is ready", recieved_token);
             self.resume(recieved_token);
         }
     }

@@ -1,4 +1,4 @@
-use crate::{Events, Interests, Token, TOKEN};
+use crate::{Events, Interests, Token};
 use std::io::{self, IoSliceMut, Read, Write};
 use std::net;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -62,20 +62,15 @@ impl Registrator {
 
 #[derive(Debug)]
 pub struct Selector {
-    id: usize,
     fd: RawFd,
 }
 
 impl Selector {
-    fn new_with_id(id: usize) -> io::Result<Self> {
-        Ok(Selector {
-            id,
-            fd: epoll_create()?,
-        })
-    }
 
     pub fn new() -> io::Result<Self> {
-        Selector::new_with_id(TOKEN.next())
+        Ok(Selector {
+            fd: epoll_create()?,
+        })
     }
 
     pub fn id(&self) -> usize {
@@ -119,7 +114,7 @@ impl Drop for Selector {
 pub type Event = ffi::Event;
 impl Event {
     pub fn id(&self) -> Token {
-        Token::new(self.data().as_usize())
+        self.data().as_usize()
     }
 }
 
