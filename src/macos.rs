@@ -67,17 +67,12 @@ impl Registrator {
 
 #[derive(Debug)]
 pub struct Selector {
-    id: usize,
     kq: Source,
 }
 
 impl Selector {
     pub fn new() -> io::Result<Self> {
         Ok(Selector { kq: kqueue()? })
-    }
-
-    pub fn id(&self) -> usize {
-        self.id
     }
 
     /// This function blocks and waits until an event has been recieved. It never times out.
@@ -332,7 +327,7 @@ mod tests {
     use crate::Interests;
     #[test]
     fn create_kevent_works() {
-        let selector = Selector::new_with_id(1).unwrap();
+        let selector = Selector::new().unwrap();
         let mut sock = TcpStream::connect("www.google.com:80").unwrap();
         let poll_is_dead = Arc::new(AtomicBool::new(false));
         let registrator = selector.registrator(poll_is_dead.clone());
@@ -344,7 +339,7 @@ mod tests {
 
     #[test]
     fn select_kevent_works() {
-        let selector = Selector::new_with_id(1).unwrap();
+        let selector = Selector::new().unwrap();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
@@ -370,7 +365,7 @@ mod tests {
 
     #[test]
     fn read_kevent_works() {
-        let selector = Selector::new_with_id(1).unwrap();
+        let selector = Selector::new().unwrap();
         let mut sock: TcpStream = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
         let request = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
                        Host: slowwly.robertomurray.co.uk\r\n\
