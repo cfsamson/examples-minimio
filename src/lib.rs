@@ -12,7 +12,7 @@ pub use windows::{Event, Registrator, Selector, TcpStream};
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{Event, Registrator, Selector, Source, TcpStream};
+pub use macos::{Event, Registrator, Selector, TcpStream};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -35,11 +35,6 @@ pub type Token = usize;
 pub struct Poll {
     registry: Registry,
     is_poll_dead: Arc<AtomicBool>,
-}
-
-#[derive(Debug)]
-pub struct Registry {
-    selector: Selector,
 }
 
 impl Poll {
@@ -78,6 +73,12 @@ impl Poll {
         Ok(events.len())
     }
 }
+
+#[derive(Debug)]
+pub struct Registry {
+    selector: Selector,
+}
+
 
 const WRITABLE: u8 = 0b0000_0001;
 const READABLE: u8 = 0b0000_0010;

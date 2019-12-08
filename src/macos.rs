@@ -135,10 +135,6 @@ impl TcpStream {
 
         Ok(TcpStream { inner: stream })
     }
-
-    pub fn source(&self) -> Source {
-        self.inner.as_raw_fd()
-    }
 }
 
 impl Read for TcpStream {

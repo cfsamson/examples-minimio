@@ -273,7 +273,7 @@ mod ffi {
             self.lp_completion_key as usize
         }
 
-        pub fn zeroed() -> Self {
+        pub(crate) fn zeroed() -> Self {
             OVERLAPPED_ENTRY {
                 lp_completion_key: ptr::null_mut(),
                 lp_overlapped: ptr::null_mut(),
