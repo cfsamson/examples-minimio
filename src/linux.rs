@@ -73,10 +73,6 @@ impl Selector {
         })
     }
 
-    pub fn id(&self) -> usize {
-        self.id
-    }
-
     /// This function blocks and waits until an event has been recieved. `timeout` None means
     /// the poll will never time out.
     pub fn select(&self, events: &mut Events, timeout_ms: Option<i32>) -> io::Result<()> {
@@ -114,7 +110,7 @@ impl Drop for Selector {
 pub type Event = ffi::Event;
 impl Event {
     pub fn id(&self) -> Token {
-        self.data().as_usize()
+        self.data()
     }
 }
 
@@ -182,65 +178,25 @@ mod ffi {
     pub const EPOLLIN: i32 = 0x1;
     pub const EPOLLONESHOT: i32 = 0x40000000;
 
-    /// This is a new structure for us. The Union type in Rust is there mostly to work with C-type unions. A Union is
-    /// like an untyped enum, meaing that `Data` can be *either* a `uint32` or a `uint64` for exaple. It's easiest to think
-    /// of this like a very primitive Enum. The size of a Union is the size of its largest field.
-    /// You can read more about Unions in Rust here: https://doc.rust-lang.org/reference/items/unions.html
-    #[repr(C)]
-    pub union Data {
-        void: *const c_void,
-        fd: i32,
-        uint32: u32,
-        uint64: u64,
-    }
-
-    /// Modelling `Data` Union to a Enum is not needed since we know what value we pass in and therefore what
-    /// value to expect. We know that the size of `Data` is 8 bytes anyway.
-    pub enum EpollData {
-        Void(*const c_void),
-        Fd(i32),
-        Uint32(u32),
-        Uint64(u64),
-    }
-
-    impl EpollData {
-        pub fn as_usize(&self) -> usize {
-            match self {
-                EpollData::Void(n) => *n as usize,
-                EpollData::Fd(n) => *n as usize,
-                EpollData::Uint32(n) => *n as usize,
-                EpollData::Uint64(n) => *n as usize,
-            }
-        }
-    }
-
     /// Since the same name is used multiple times, it can be confusing but we have an `Event` structure.
     /// This structure ties a file descriptor and a field called `events` together. The field `events` holds information
     /// about what events are ready for that file descriptor.
-    #[repr(C)]
+    #[repr(C, packed)]
     pub struct Event {
         /// This can be confusing, but this is the events that are ready on the file descriptor.
         events: u32,
-        // TODO: Consider if we should just treat this as a usize instead...
-        epoll_data: Data,
+        epoll_data: usize,
     }
 
     impl Event {
         pub fn new(events: i32, id: usize) -> Self {
             Event {
                 events: events as u32,
-                epoll_data: Data { uint64: id as u64 },
+                epoll_data: id,
             }
         }
-        pub fn data(&self) -> EpollData {
-            unsafe {
-                match self.epoll_data {
-                    Data { void } => EpollData::Void(void),
-                    Data { fd } => EpollData::Fd(fd),
-                    Data { uint32 } => EpollData::Uint32(uint32),
-                    Data { uint64 } => EpollData::Uint64(uint64),
-                }
-            }
+        pub fn data(&self) -> usize {
+            self.epoll_data
         }
     }
 
