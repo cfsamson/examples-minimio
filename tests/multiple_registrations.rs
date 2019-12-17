@@ -22,7 +22,7 @@ fn multiple_registraions() {
         let mut events = Events::with_capacity(1024);
         loop {
             println!("POLLING");
-            let mut will_close = false;
+            let will_close = false;
             println!("{:?}", poll);
             match poll.poll(&mut events, Some(200)) {
                 Ok(..) => (),
