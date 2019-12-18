@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
-pub type Source = std::os::windows::io::RawSocket;
 
 #[derive(Debug)]
 pub struct TcpStream {
@@ -58,10 +57,6 @@ impl TcpStream {
             pos: 0,
             //status: TcpReadiness::NotReady,
         })
-    }
-
-    pub fn source(&self) -> Source {
-        self.inner.as_raw_socket()
     }
 }
 
@@ -235,14 +230,6 @@ mod ffi {
     use std::os::windows::io::RawSocket;
     use std::ptr;
 
-    #[derive(Debug, Clone)]
-    pub struct IOCPevent {}
-
-    impl Default for IOCPevent {
-        fn default() -> Self {
-            IOCPevent {}
-        }
-    }
 
     #[repr(C)]
     #[derive(Clone, Debug)]
@@ -263,7 +250,7 @@ mod ffi {
         // Normally a pointer but since it's just passed through we can store whatever valid usize we want. For our case
         // an Id or Token is more secure than dereferencing som part of memory later.
         lp_completion_key: *mut usize,
-        pub lp_overlapped: *mut OVERLAPPED,
+        pub lp_overlapped: *mut WSAOVERLAPPED,
         internal: usize,
         bytes_transferred: u32,
     }
@@ -315,38 +302,8 @@ mod ffi {
         }
     }
 
-    // https://docs.microsoft.com/en-us/windows/win32/api/minwinbase/ns-minwinbase-overlapped
-    #[repr(C)]
-    #[derive(Debug)]
-    pub struct OVERLAPPED {
-        pub internal: ULONG_PTR,
-        internal_high: ULONG_PTR,
-        dummy: [DWORD; 2],
-        h_event: HANDLE,
-    }
 
-    #[repr(C)]
-    pub struct WSADATA {
-        w_version: u16,
-        i_max_sockets: u16,
-        i_max_u_dp_dg: u16,
-        lp_vendor_info: u8,
-        sz_description: [u8; WSADESCRIPTION_LEN + 1],
-        sz_system_status: [u8; WSASYS_STATUS_LEN + 1],
-    }
-
-    impl Default for WSADATA {
-        fn default() -> WSADATA {
-            WSADATA {
-                w_version: 0,
-                i_max_sockets: 0,
-                i_max_u_dp_dg: 0,
-                lp_vendor_info: 0,
-                sz_description: [0_u8; WSADESCRIPTION_LEN + 1],
-                sz_system_status: [0_u8; WSASYS_STATUS_LEN + 1],
-            }
-        }
-    }
+ 
 
     // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
     /// The HANDLE type is actually a `*mut c_void` but windows preserves backwards compatibility by allowing
@@ -363,7 +320,6 @@ mod ffi {
     pub type LPDWORD = *mut DWORD;
     pub type LPWSABUF = *mut WSABUF;
     pub type LPWSAOVERLAPPED = *mut WSAOVERLAPPED;
-    pub type LPOVERLAPPED = *mut OVERLAPPED;
     pub type LPWSAOVERLAPPED_COMPLETION_ROUTINE = *const extern "C" fn();
 
     // https://referencesource.microsoft.com/#System.Runtime.Remoting/channels/ipc/win32namedpipes.cs,edc09ced20442fea,references
@@ -379,8 +335,6 @@ mod ffi {
     // see for yourself: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=4b93de7d7eb43fa9cd7f5b60933d8935
     pub const INFINITE: u32 = 0xFFFFFFFF;
 
-    pub const WSADESCRIPTION_LEN: usize = 256;
-    pub const WSASYS_STATUS_LEN: usize = 128;
 
     #[link(name = "Kernel32")]
     extern "stdcall" {
@@ -426,7 +380,7 @@ mod ffi {
             CompletionPort: HANDLE,
             lpNumberOfBytesTransferred: LPDWORD,
             lpCompletionKey: PULONG_PTR,
-            lpOverlapped: LPOVERLAPPED,
+            lpOverlapped: LPWSAOVERLAPPED,
             dwMilliseconds: DWORD,
         ) -> i32;
 
@@ -579,7 +533,7 @@ mod ffi {
         completion_port: isize,
         bytes_transferred: &mut u32,
         completion_key: usize,
-        overlapped: &mut OVERLAPPED,
+        overlapped: &mut WSAOVERLAPPED,
         timeout: Option<u32>,
     ) -> io::Result<u32> {
         let ul_num_entries_removed: u32 = 0;
@@ -657,7 +611,6 @@ mod tests {
         for event in events {
             let ol = unsafe { &*(event.lp_overlapped) };
             println!("EVT_OVERLAPPED {:?}", ol);
-            println!("OVERLAPPED_STATUS {:?}", ol.internal as usize);
             println!("COMPL_KEY: {:?}", event.id());
         }
 
