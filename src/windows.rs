@@ -136,6 +136,9 @@ impl Registrator {
         Ok(())
     }
 
+    /// NOTE: An alternative solution is to use the `CompletionKey` to signal that
+    /// this is a close event. We don't use it for anything else so it is a
+    /// good candidate to use for timers and special events like this
     pub fn close_loop(&self) -> io::Result<()> {
         if self
             .is_poll_dead
@@ -306,6 +309,8 @@ mod ffi {
         }
     }
 
+    /// Operation is a way for us to attach additional context to the `WSAOVERLAPPED`
+    /// event. Inpired by [BOOST ASIO](https://www.boost.org/doc/libs/1_42_0/boost/asio/detail/win_iocp_io_service.hpp)
     #[derive(Debug)]
     #[repr(C)]
     pub struct Operation {
