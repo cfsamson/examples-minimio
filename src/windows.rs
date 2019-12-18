@@ -320,10 +320,6 @@ mod ffi {
                 token,
             }
         }
-
-        pub(crate) fn set_token(&mut self, token: usize) {
-            self.token = token;
-        }
     }
 
     // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
