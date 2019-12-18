@@ -7,6 +7,7 @@ use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::collections::LinkedList;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 
@@ -18,7 +19,7 @@ pub struct TcpStream {
     event: Option<ffi::WSAOVERLAPPED>,
     token: Option<usize>,
     pos: usize,
-    // status: TcpReadiness,
+    operations: LinkedList<ffi::Operation>,
 }
 
 // On Windows we need to be careful when using IOCP on a server. Since we're "lending"
@@ -55,7 +56,7 @@ impl TcpStream {
             event: None,
             token: None,
             pos: 0,
-            //status: TcpReadiness::NotReady,
+            operations: LinkedList::new(),
         })
     }
 }
@@ -114,16 +115,19 @@ impl Registrator {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "Poll instance is dead.",
-            )); 
-             
-              
-               
+            ));    
         }
 
-        ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, token)?;
+        ffi::create_io_completion_port(
+            soc.as_raw_socket(), 
+            self.completion_port, 0
+        )?;
+
+        let op = ffi::Operation::new(token);
+        soc.operations.push_back(op);
 
         if interests.is_readable() {
-            ffi::wsa_recv(soc.as_raw_socket(), &mut soc.wsabuf)?;
+            ffi::wsa_recv(soc.as_raw_socket(), &mut soc.wsabuf, soc.operations.back_mut().unwrap())?;
         } else {
             unimplemented!();
         }
@@ -257,7 +261,9 @@ mod ffi {
 
     impl OVERLAPPED_ENTRY {
         pub fn id(&self) -> Token {
-            self.lp_completion_key as usize
+            // TODO: this might be solvable wihtout sacrifising so much of Rust safety guarantees
+            let operation: &Operation = unsafe {&*(self.lp_overlapped as *const Operation)};
+            operation.token
         }
 
         pub(crate) fn zeroed() -> Self {
@@ -302,6 +308,25 @@ mod ffi {
         }
     }
 
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct Operation {
+        wsaoverlapped: WSAOVERLAPPED,
+        token: usize,
+    }
+
+    impl Operation {
+        pub(crate) fn new(token: usize) -> Self {
+            Operation {
+                wsaoverlapped: WSAOVERLAPPED::zeroed(),
+                token,
+            }
+        }
+
+        pub(crate) fn set_token(&mut self, token: usize) {
+            self.token = token;
+        } 
+    }
 
  
 
@@ -435,18 +460,19 @@ mod ffi {
     /// Creates a socket read event.
     /// ## Returns
     /// The number of bytes recieved
-    pub fn wsa_recv(s: RawSocket, wsabuffers: &mut [WSABUF]) -> Result<WSAOVERLAPPED, io::Error> {
-        let mut ol = WSAOVERLAPPED::zeroed();
+    pub fn wsa_recv(s: RawSocket, wsabuffers: &mut [WSABUF], op: &mut Operation) -> Result<(), io::Error> {
+
         let mut flags = 0;
 
         let res = unsafe {
+            let operation_ptr: *mut Operation = op;
             WSARecv(
                 s,
                 wsabuffers.as_mut_ptr(),
                 1,
                 ptr::null_mut(),
                 &mut flags,
-                &mut ol,
+                operation_ptr as *mut WSAOVERLAPPED,
                 ptr::null_mut(),
             )
         };
@@ -454,14 +480,14 @@ mod ffi {
             let err = unsafe { WSAGetLastError() };
             if err == WSA_IO_PENDING {
                 // Everything is OK, and we can wait this with GetQueuedCompletionStatus
-                Ok(ol)
+                Ok(())
             } else {
                 Err(std::io::Error::last_os_error())
             }
         } else {
             // The socket is already ready so we don't need to queue it
             // TODO: Avoid queueing this
-            Ok(ol)
+            Ok(())
         }
     }
 
