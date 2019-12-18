@@ -66,7 +66,6 @@ pub struct Selector {
 }
 
 impl Selector {
-
     pub fn new() -> io::Result<Self> {
         Ok(Selector {
             fd: epoll_create()?,

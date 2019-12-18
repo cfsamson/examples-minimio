@@ -54,16 +54,16 @@ fn multiple_registraions() {
     stream
         .write_all(request.as_bytes())
         .expect("Error writing to stream");
-    
+
     let mut stream2 = TcpStream::connect("slowwly.robertomurray.co.uk:80").unwrap();
 
     let request2 = "GET /delay/1000/url/http://www.google.com HTTP/1.1\r\n\
-                   Host: slowwly.robertomurray.co.uk\r\n\
-                   Connection: close\r\n\
-                   \r\n";
+                    Host: slowwly.robertomurray.co.uk\r\n\
+                    Connection: close\r\n\
+                    \r\n";
     stream2
         .write_all(request2.as_bytes())
-        .expect("Error writing to stream");              
+        .expect("Error writing to stream");
 
     // Mio does this
     // NOTE: On windows, the TcpStream struct can contain an Arc<Mutex<Vec<u8>>> where it leaves
@@ -103,11 +103,11 @@ fn multiple_registraions() {
         // Running the code for event
         rt.run(recieved_token); // runs the code associated with event 10 in this case
                                 // let's close the event loop since we know we only have 1 event
-       
-       // we close it after 2 events
-       if counter == 2 {
+
+        // we close it after 2 events
+        if counter == 2 {
             registrator.close_loop().expect("close loop err.");
-       }
+        }
     }
     handle.join().expect("error joining thread");
     println!("EXITING");

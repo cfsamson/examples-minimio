@@ -2,12 +2,12 @@
 #![allow(dead_code)]
 
 use crate::{Interests, Token};
+use std::collections::LinkedList;
 use std::io::{self, Read, Write};
 use std::net;
 use std::os::windows::io::{AsRawSocket, RawSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::collections::LinkedList;
 
 pub type Event = ffi::OVERLAPPED_ENTRY;
 
@@ -23,11 +23,11 @@ pub struct TcpStream {
 }
 
 // On Windows we need to be careful when using IOCP on a server. Since we're "lending"
-// access to the OS over memory we crate (we're not giving over ownership, 
+// access to the OS over memory we crate (we're not giving over ownership,
 // but can't touch while it's lent either),
 // it's easy to exploit this by issuing a lot of requests while delaying our
 // responses. By doing this we would force the server to hand over so many write
-// read buffers while waiting for clients to respond that it might run out of memory. 
+// read buffers while waiting for clients to respond that it might run out of memory.
 // Now the way we would normally handle this is to have a counter and limit the
 // number of outstandig buffers, queueing requests and only handle them when the
 // counter is below the high water mark. The same goes for using unlimited timeouts.
@@ -115,19 +115,20 @@ impl Registrator {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
                 "Poll instance is dead.",
-            ));    
+            ));
         }
 
-        ffi::create_io_completion_port(
-            soc.as_raw_socket(), 
-            self.completion_port, 0
-        )?;
+        ffi::create_io_completion_port(soc.as_raw_socket(), self.completion_port, 0)?;
 
         let op = ffi::Operation::new(token);
         soc.operations.push_back(op);
 
         if interests.is_readable() {
-            ffi::wsa_recv(soc.as_raw_socket(), &mut soc.wsabuf, soc.operations.back_mut().unwrap())?;
+            ffi::wsa_recv(
+                soc.as_raw_socket(),
+                &mut soc.wsabuf,
+                soc.operations.back_mut().unwrap(),
+            )?;
         } else {
             unimplemented!();
         }
@@ -234,7 +235,6 @@ mod ffi {
     use std::os::windows::io::RawSocket;
     use std::ptr;
 
-
     #[repr(C)]
     #[derive(Clone, Debug)]
     pub struct WSABUF {
@@ -251,10 +251,8 @@ mod ffi {
     #[repr(C)]
     #[derive(Debug, Clone)]
     pub struct OVERLAPPED_ENTRY {
-        // Normally a pointer but since it's just passed through we can store whatever valid usize we want. For our case
-        // an Id or Token is more secure than dereferencing som part of memory later.
         lp_completion_key: *mut usize,
-        pub lp_overlapped: *mut WSAOVERLAPPED,
+        lp_overlapped: *mut WSAOVERLAPPED,
         internal: usize,
         bytes_transferred: u32,
     }
@@ -262,7 +260,7 @@ mod ffi {
     impl OVERLAPPED_ENTRY {
         pub fn id(&self) -> Token {
             // TODO: this might be solvable wihtout sacrifising so much of Rust safety guarantees
-            let operation: &Operation = unsafe {&*(self.lp_overlapped as *const Operation)};
+            let operation: &Operation = unsafe { &*(self.lp_overlapped as *const Operation) };
             operation.token
         }
 
@@ -325,10 +323,8 @@ mod ffi {
 
         pub(crate) fn set_token(&mut self, token: usize) {
             self.token = token;
-        } 
+        }
     }
-
- 
 
     // You can find most of these here: https://docs.microsoft.com/en-us/windows/win32/winprog/windows-data-types
     /// The HANDLE type is actually a `*mut c_void` but windows preserves backwards compatibility by allowing
@@ -359,7 +355,6 @@ mod ffi {
     // Interpreted as an i32 the value is -1
     // see for yourself: https://play.rust-lang.org/?version=stable&mode=debug&edition=2018&gist=4b93de7d7eb43fa9cd7f5b60933d8935
     pub const INFINITE: u32 = 0xFFFFFFFF;
-
 
     #[link(name = "Kernel32")]
     extern "stdcall" {
@@ -460,12 +455,15 @@ mod ffi {
     /// Creates a socket read event.
     /// ## Returns
     /// The number of bytes recieved
-    pub fn wsa_recv(s: RawSocket, wsabuffers: &mut [WSABUF], op: &mut Operation) -> Result<(), io::Error> {
-
+    pub fn wsa_recv(
+        s: RawSocket,
+        wsabuffers: &mut [WSABUF],
+        op: &mut Operation,
+    ) -> Result<(), io::Error> {
         let mut flags = 0;
+        let operation_ptr: *mut Operation = op;
 
         let res = unsafe {
-            let operation_ptr: *mut Operation = op;
             WSARecv(
                 s,
                 wsabuffers.as_mut_ptr(),
@@ -554,36 +552,6 @@ mod ffi {
             Ok(ul_num_entries_removed)
         }
     }
-
-    pub fn get_queued_completion_status(
-        completion_port: isize,
-        bytes_transferred: &mut u32,
-        completion_key: usize,
-        overlapped: &mut WSAOVERLAPPED,
-        timeout: Option<u32>,
-    ) -> io::Result<u32> {
-        let ul_num_entries_removed: u32 = 0;
-        // can't coerce directly to *mut *mut usize and cant cast `&mut` as `*mut`
-        // let completion_key_ptr: *mut &mut usize = completion_key_ptr;
-        // // but we can cast a `*mut ...`
-        // let completion_key_ptr: *mut *mut usize = completion_key_ptr as *mut *mut usize;
-        let timeout = timeout.unwrap_or(INFINITE);
-        let res = unsafe {
-            GetQueuedCompletionStatus(
-                completion_port,
-                bytes_transferred,
-                completion_key as *mut *mut usize,
-                overlapped,
-                timeout,
-            )
-        };
-
-        if res == 0 {
-            Err(std::io::Error::last_os_error())
-        } else {
-            Ok(ul_num_entries_removed)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -635,16 +603,15 @@ mod tests {
         selector.select(&mut events, None).expect("Select failed");
 
         for event in events {
-            let ol = unsafe { &*(event.lp_overlapped) };
-            println!("EVT_OVERLAPPED {:?}", ol);
             println!("COMPL_KEY: {:?}", event.id());
+            assert_eq!(2, event.id());
         }
 
         println!("SOCKET AFTER EVENT RETURN: {:?}", sock);
 
         let mut buffer = String::new();
         sock.read_to_string(&mut buffer).unwrap();
-
         println!("BUFFERS: {}", buffer);
+        assert!(!buffer.is_empty())
     }
 }

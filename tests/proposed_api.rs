@@ -1,6 +1,6 @@
 use minimio::{Events, Interests, Poll, Registrator, TcpStream};
-use std::{io, io::Read, io::Write, thread, thread::JoinHandle};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::{io, io::Read, io::Write, thread, thread::JoinHandle};
 
 const TEST_TOKEN: usize = 10; // Hard coded for this test only
 
@@ -16,7 +16,9 @@ fn proposed_api() {
     stream.write_all(request).expect("Stream write err.");
 
     let registrator = reactor.registrator();
-    registrator.register(&mut stream, TEST_TOKEN, Interests::READABLE).expect("registration err.");
+    registrator
+        .register(&mut stream, TEST_TOKEN, Interests::READABLE)
+        .expect("registration err.");
 
     executor.suspend(TEST_TOKEN, move || {
         let mut buffer = String::new();
@@ -54,7 +56,10 @@ impl Reactor {
             }
         });
 
-        Reactor { handle: Some(handle), registrator: Some(registrator) }
+        Reactor {
+            handle: Some(handle),
+            registrator: Some(registrator),
+        }
     }
 
     fn registrator(&mut self) -> Registrator {
@@ -76,13 +81,17 @@ struct Excutor {
 
 impl Excutor {
     fn new(evt_reciever: Receiver<usize>) -> Self {
-        Excutor { events: vec![], evt_reciever }
+        Excutor {
+            events: vec![],
+            evt_reciever,
+        }
     }
     fn suspend(&mut self, id: usize, f: impl FnMut() + 'static) {
         self.events.push((id, Box::new(f)));
     }
     fn resume(&mut self, event: usize) {
-        let (_, f) = self.events
+        let (_, f) = self
+            .events
             .iter_mut()
             .find(|(e, _)| *e == event)
             .expect("Couldn't find event.");
