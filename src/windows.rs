@@ -63,23 +63,14 @@ impl TcpStream {
 
 impl Read for TcpStream {
     fn read(&mut self, buff: &mut [u8]) -> io::Result<usize> {
-        //   self.inner.read(buff)
         let mut bytes_read = 0;
-        if self.buffer.len() - bytes_read <= buff.len() {
-            for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
-                *b = *a;
-                bytes_read += 1;
-            }
-
-            Ok(bytes_read)
-        } else {
-            for (b, a) in buff.iter_mut().zip(&self.buffer) {
-                *b = *a;
-                bytes_read += 1;
-            }
-            self.pos += bytes_read;
-            Ok(bytes_read)
+        println!("{}", buff.len());
+        for (a, b) in self.buffer.iter().skip(self.pos).zip(buff) {
+            *b = *a;
+            bytes_read += 1;
         }
+        self.pos += bytes_read;
+        Ok(bytes_read)
     }
 }
 
