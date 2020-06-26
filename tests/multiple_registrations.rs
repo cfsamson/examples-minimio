@@ -86,11 +86,12 @@ fn multiple_registraions() {
         println!("PROPOSED API:\n{}", buffer);
     });
 
-    rt.spawn(provided_token2, move || {
+     rt.spawn(provided_token2, move || {
         let mut buffer = String::new();
-        stream2.read_to_string(&mut buffer).unwrap();
+        let mut buffer = [0u8; 2048* 2];
+        while stream2.read(&mut buffer).unwrap() > 0 {}
         assert!(!buffer.is_empty(), "Got an empty buffer");
-        println!("PROPOSED API:\n{}", buffer);
+        println!("PROPOSED API2:\n{}", String::from_utf8(buffer.to_vec()).unwrap());
     });
 
     // ===== THIS WILL BE IN OUR MAIN EVENT LOOP ======
